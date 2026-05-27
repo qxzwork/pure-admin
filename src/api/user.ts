@@ -1,25 +1,21 @@
 import { http } from "@/utils/http";
 
-export type UserResult = {
+export type LoginResult = {
   code: number;
   message: string;
   data: {
-    /** 头像 */
-    avatar: string;
+    /** JWT Token */
+    token: string;
+    /** Token 类型 */
+    tokenType: string;
+    /** 过期时间（秒） */
+    expiresIn: number;
+    /** 用户ID */
+    userId: number;
     /** 用户名 */
     username: string;
     /** 昵称 */
     nickname: string;
-    /** 当前登录用户的角色 */
-    roles: Array<string>;
-    /** 按钮级别权限 */
-    permissions: Array<string>;
-    /** `token` */
-    accessToken: string;
-    /** 用于调用刷新`accessToken`的接口时所需的`token` */
-    refreshToken: string;
-    /** `accessToken`的过期时间（格式'xxxx/xx/xx xx:xx:xx'） */
-    expires: Date;
   };
 };
 
@@ -27,28 +23,36 @@ export type RefreshTokenResult = {
   code: number;
   message: string;
   data: {
-    /** `token` */
-    accessToken: string;
-    /** 用于调用刷新`accessToken`的接口时所需的`token` */
-    refreshToken: string;
-    /** `accessToken`的过期时间（格式'xxxx/xx/xx xx:xx:xx'） */
-    expires: Date;
+    /** JWT Token */
+    token: string;
+    /** Token 类型 */
+    tokenType: string;
+    /** 过期时间（秒） */
+    expiresIn: number;
+    /** 用户ID */
+    userId: number;
+    /** 用户名 */
+    username: string;
+    /** 昵称 */
+    nickname: string;
   };
 };
 
 export type UserInfo = {
-  /** 头像 */
-  avatar: string;
+  /** 用户ID */
+  userId: number;
   /** 用户名 */
   username: string;
   /** 昵称 */
   nickname: string;
   /** 邮箱 */
   email: string;
-  /** 联系电话 */
-  phone: string;
-  /** 简介 */
-  description: string;
+  /** 头像 */
+  avatar: string;
+  /** 角色编码列表 */
+  roles: Array<string>;
+  /** 权限编码列表 */
+  permissions: Array<string>;
 };
 
 export type UserInfoResult = {
@@ -74,12 +78,22 @@ type ResultTable = {
 
 /** 登录 */
 export const getLogin = (data?: object) => {
-  return http.request<UserResult>("post", "/login", { data });
+  return http.request<LoginResult>("post", "/api/auth/login", { data });
+};
+
+/** 登出 */
+export const getLogout = () => {
+  return http.request("post", "/api/auth/logout");
 };
 
 /** 刷新`token` */
-export const refreshTokenApi = (data?: object) => {
-  return http.request<RefreshTokenResult>("post", "/refresh-token", { data });
+export const refreshTokenApi = () => {
+  return http.request<RefreshTokenResult>("post", "/api/auth/refresh");
+};
+
+/** 获取当前用户信息（含角色和权限） */
+export const getUserInfo = () => {
+  return http.request<UserInfoResult>("get", "/api/auth/me");
 };
 
 /** 账户设置-个人信息 */

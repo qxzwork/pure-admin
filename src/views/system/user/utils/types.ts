@@ -26,8 +26,8 @@ interface RoleFormItemProps {
   nickname: string;
   /** 角色列表 */
   roleOptions: any[];
-  /** 选中的角色列表 */
-  ids: Record<number, unknown>[];
+  /** 选中的角色ID列表 */
+  ids: number[];
 }
 interface RoleFormProps {
   formInline: RoleFormItemProps;

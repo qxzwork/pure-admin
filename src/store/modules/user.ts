@@ -8,13 +8,21 @@ import {
   storageLocal
 } from "../utils";
 import {
-  type UserResult,
+  type LoginResult,
   type RefreshTokenResult,
   getLogin,
-  refreshTokenApi
+  getLogout,
+  refreshTokenApi,
+  getUserInfo
 } from "@/api/user";
 import { useMultiTagsStoreHook } from "./multiTags";
-import { type DataInfo, setToken, removeToken, userKey } from "@/utils/auth";
+import {
+  type DataInfo,
+  setToken,
+  setUserInfo,
+  removeToken,
+  userKey
+} from "@/utils/auth";
 
 export const useUserStore = defineStore("pure-user", {
   state: (): userType => ({
@@ -77,14 +85,32 @@ export const useUserStore = defineStore("pure-user", {
     },
     /** 登入 */
     async loginByUsername(data) {
-      return new Promise<UserResult>((resolve, reject) => {
+      return new Promise<LoginResult>((resolve, reject) => {
         getLogin(data)
-          .then(data => {
-            if (data.code === 0) {
-              setToken(data.data);
-              resolve(data);
+          .then(async res => {
+            if (res.code === 200) {
+              const loginData = res.data;
+              setToken({
+                token: loginData.token,
+                expires: new Date(Date.now() + loginData.expiresIn * 1000)
+              } as DataInfo<Date>);
+              try {
+                const userRes = await getUserInfo();
+                if (userRes.code === 200) {
+                  setUserInfo({
+                    avatar: userRes.data.avatar,
+                    username: userRes.data.username,
+                    nickname: userRes.data.nickname,
+                    roles: userRes.data.roles,
+                    permissions: userRes.data.permissions
+                  });
+                }
+              } catch {
+                // 即使获取用户信息失败，登录仍然成功
+              }
+              resolve(res);
             } else {
-              reject(data.message);
+              reject(res.message);
             }
           })
           .catch(error => {
@@ -92,8 +118,13 @@ export const useUserStore = defineStore("pure-user", {
           });
       });
     },
-    /** 前端登出（不调用接口） */
-    logOut() {
+    /** 登出（调用后端接口） */
+    async logOut() {
+      try {
+        await getLogout();
+      } catch {
+        // 即使登出接口失败，也清空本地状态
+      }
       this.username = "";
       this.roles = [];
       this.permissions = [];
@@ -103,15 +134,19 @@ export const useUserStore = defineStore("pure-user", {
       router.push("/login");
     },
     /** 刷新`token` */
-    async handRefreshToken(data) {
+    async handRefreshToken() {
       return new Promise<RefreshTokenResult>((resolve, reject) => {
-        refreshTokenApi(data)
-          .then(data => {
-            if (data.code === 0) {
-              setToken(data.data);
-              resolve(data);
+        refreshTokenApi()
+          .then(res => {
+            if (res.code === 200) {
+              const refreshData = res.data;
+              setToken({
+                token: refreshData.token,
+                expires: new Date(Date.now() + refreshData.expiresIn * 1000)
+              } as DataInfo<Date>);
+              resolve(res);
             } else {
-              reject(data.message);
+              reject(res.message);
             }
           })
           .catch(error => {

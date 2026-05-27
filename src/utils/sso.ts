@@ -1,8 +1,8 @@
-import { removeToken, setToken, type DataInfo } from "./auth";
+import { removeToken, setToken, setUserInfo, type DataInfo } from "./auth";
 import { subBefore, getQueryMap } from "@pureadmin/utils";
 
 /**
- * 简版前端单点登录，根据实际业务自行编写，平台启动后本地可以跳后面这个链接进行测试 http://localhost:8848/#/permission/page/index?username=sso&roles=admin&accessToken=eyJhbGciOiJIUzUxMiJ9.admin
+ * 简版前端单点登录，根据实际业务自行编写，平台启动后本地可以跳后面这个链接进行测试 http://localhost:8848/#/permission/page/index?username=sso&roles=admin&token=eyJhbGciOiJIUzUxMiJ9.admin
  * 划重点：
  * 判断是否为单点登录，不为则直接返回不再进行任何逻辑处理，下面是单点登录后的逻辑处理
  * 1.清空本地旧信息；
@@ -13,7 +13,7 @@ import { subBefore, getQueryMap } from "@pureadmin/utils";
 (function () {
   // 获取 url 中的参数
   const params = getQueryMap(location.href) as DataInfo<Date>;
-  const must = ["username", "roles", "accessToken"];
+  const must = ["username", "roles", "token"];
   const mustLength = must.length;
   if (Object.keys(params).length !== mustLength) return;
 
@@ -37,16 +37,32 @@ import { subBefore, getQueryMap } from "@pureadmin/utils";
     removeToken();
 
     // 保存新信息到本地
-    setToken(params);
+    const tokenParams = params as unknown as DataInfo<Date>;
+    setToken(tokenParams);
+    const rawRoles = params.roles;
+    const rawPerms = params.permissions;
+    setUserInfo({
+      username: params.username,
+      roles: Array.isArray(rawRoles) ? rawRoles : rawRoles ? [rawRoles] : [],
+      permissions: Array.isArray(rawPerms)
+        ? rawPerms
+        : rawPerms
+          ? [rawPerms]
+          : []
+    });
 
     // 删除不需要显示在 url 的参数
-    delete params.roles;
-    delete params.accessToken;
+    delete (params as any).roles;
+    delete (params as any).token;
+
+    const remainingParams = { ...params };
+    delete (remainingParams as any).roles;
+    delete (remainingParams as any).token;
 
     const newUrl = `${location.origin}${location.pathname}${subBefore(
       location.hash,
       "?"
-    )}?${JSON.stringify(params)
+    )}?${JSON.stringify(remainingParams)
       .replace(/["{}]/g, "")
       .replace(/:/g, "=")
       .replace(/,/g, "&")}`;

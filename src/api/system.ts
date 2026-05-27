@@ -1,5 +1,147 @@
 import { http } from "@/utils/http";
 
+/** 用户管理 - 后端 UserDTO */
+export type UserRecord = {
+  id: number;
+  username: string;
+  password?: string;
+  nickname: string;
+  email: string;
+  phone: string;
+  avatar: string;
+  status: number;
+  roleIds: number[];
+  createTime: string;
+  updateTime: string;
+};
+
+/** 角色管理 - 后端 RoleDTO */
+export type RoleRecord = {
+  id: number;
+  roleName: string;
+  roleCode: string;
+  description: string;
+  status: number;
+  permissionIds: number[];
+  createTime: string;
+  updateTime: string;
+};
+
+/** 后端分页响应 */
+type PageResult<T> = {
+  code: number;
+  message: string;
+  data: {
+    records: T[];
+    total: number;
+    size: number;
+    current: number;
+    pages: number;
+  };
+  timestamp: number;
+};
+
+type SimpleResult<T> = {
+  code: number;
+  message: string;
+  data: T;
+  timestamp: number;
+};
+
+// ========== 用户管理 API ==========
+
+/** 分页查询用户列表 */
+export const getUserList = (params: {
+  current: number;
+  size: number;
+  username?: string;
+  status?: number;
+}) => {
+  return http.request<PageResult<UserRecord>>("get", "/api/management/users", {
+    params
+  });
+};
+
+/** 新增用户 */
+export const createUser = (data: {
+  username: string;
+  password: string;
+  nickname: string;
+  email?: string;
+  phone?: string;
+  status?: number;
+}) => {
+  return http.request<SimpleResult<number>>("post", "/api/management/users", {
+    data
+  });
+};
+
+/** 编辑用户 */
+export const updateUser = (
+  id: number,
+  data: {
+    username: string;
+    nickname: string;
+    email?: string;
+    phone?: string;
+    status?: number;
+  }
+) => {
+  return http.request<SimpleResult<null>>(
+    "put",
+    `/api/management/users/${id}`,
+    {
+      data
+    }
+  );
+};
+
+/** 删除用户 */
+export const deleteUser = (id: number) => {
+  return http.request<SimpleResult<null>>(
+    "delete",
+    `/api/management/users/${id}`
+  );
+};
+
+/** 重置密码 */
+export const resetUserPassword = (id: number, newPassword: string) => {
+  return http.request<SimpleResult<null>>(
+    "put",
+    `/api/management/users/${id}/password`,
+    { data: { key: newPassword } }
+  );
+};
+
+/** 获取用户角色ID列表 */
+export const getRoleIds = (userId: number) => {
+  return http.request<SimpleResult<number[]>>(
+    "get",
+    `/api/management/users/${userId}/roles`
+  );
+};
+
+/** 设置用户角色 */
+export const setUserRoles = (userId: number, roleIds: number[]) => {
+  return http.request<SimpleResult<null>>(
+    "put",
+    `/api/management/users/${userId}/roles`,
+    { data: roleIds }
+  );
+};
+
+// ========== 角色管理 API ==========
+
+/** 查询所有角色（用于下拉选择） */
+export const getAllRoleList = () => {
+  return http.request<SimpleResult<RoleRecord[]>>(
+    "get",
+    "/api/management/roles/all"
+  );
+};
+
+// ========== 以下为仍使用 mock 的接口（暂未对接后端） ==========
+
 type Result = {
   code: number;
   message: string;
@@ -19,21 +161,6 @@ type ResultTable = {
     /** 当前页数 */
     currentPage?: number;
   };
-};
-
-/** 获取系统管理-用户管理列表 */
-export const getUserList = (data?: object) => {
-  return http.request<ResultTable>("post", "/user", { data });
-};
-
-/** 系统管理-用户管理-获取所有角色列表 */
-export const getAllRoleList = () => {
-  return http.request<Result>("get", "/list-all-role");
-};
-
-/** 系统管理-用户管理-根据userId，获取对应角色id列表（userId：用户id） */
-export const getRoleIds = (data?: object) => {
-  return http.request<Result>("post", "/list-role-ids", { data });
 };
 
 /** 获取系统管理-角色管理列表 */
