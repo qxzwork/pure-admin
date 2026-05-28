@@ -63,9 +63,9 @@ function filterTree(data: RouteComponent[]) {
   return newTree;
 }
 
-/** 过滤children长度为0的的目录，当目录下没有菜单时，会过滤此目录，目录没有赋予roles权限，当目录下只要有一个菜单有显示权限，那么此目录就会显示 */
+/** 过滤children长度为0的目录 */
 function filterChildrenTree(data: RouteComponent[]) {
-  const newTree = cloneDeep(data).filter((v: any) => v?.children?.length !== 0);
+  const newTree = cloneDeep(data);
   newTree.forEach(
     (v: { children }) => v.children && (v.children = filterTree(v.children))
   );
@@ -210,7 +210,7 @@ function initRouter() {
     } else {
       return new Promise(resolve => {
         getAsyncRoutes().then(({ code, data }) => {
-          if (code === 0) {
+          if (code === 200) {
             handleAsyncRoutes(cloneDeep(data));
             storageLocal().setItem(key, data);
             resolve(router);
@@ -223,7 +223,7 @@ function initRouter() {
   } else {
     return new Promise(resolve => {
       getAsyncRoutes().then(({ code, data }) => {
-        if (code === 0) {
+        if (code === 200) {
           handleAsyncRoutes(cloneDeep(data));
           resolve(router);
         } else {

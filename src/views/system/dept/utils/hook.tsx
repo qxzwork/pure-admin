@@ -2,7 +2,7 @@ import dayjs from "dayjs";
 import editForm from "../form.vue";
 import { handleTree } from "@/utils/tree";
 import { message } from "@/utils/message";
-import { getDeptList } from "@/api/system";
+import { getDeptList, createDept, updateDept, deleteDept } from "@/api/system";
 import { usePublicHooks } from "../../hooks";
 import { addDialog } from "@/components/ReDialog";
 import { reactive, ref, onMounted, h } from "vue";
@@ -74,23 +74,25 @@ export function useDept() {
 
   async function onSearch() {
     loading.value = true;
-    const { code, data } = await getDeptList(); // 这里是返回一维数组结构，前端自行处理成树结构，返回格式要求：唯一id加父节点parentId，parentId取父节点id
-    if (code === 0) {
-      let newData = data;
-      if (!isAllEmpty(form.name)) {
-        // 前端搜索部门名称
-        newData = newData.filter(item => item.name.includes(form.name));
+    try {
+      const { code, data } = await getDeptList();
+      if (code === 200) {
+        let newData = data ?? [];
+        if (!isAllEmpty(form.name)) {
+          newData = newData.filter(item => item.name.includes(form.name));
+        }
+        if (!isAllEmpty(form.status)) {
+          newData = newData.filter(item => item.status === form.status);
+        }
+        dataList.value = handleTree(newData);
       }
-      if (!isAllEmpty(form.status)) {
-        // 前端搜索状态
-        newData = newData.filter(item => item.status === form.status);
-      }
-      dataList.value = handleTree(newData); // 处理成树结构
+    } catch {
+      message("获取部门列表失败", { type: "error" });
+    } finally {
+      setTimeout(() => {
+        loading.value = false;
+      }, 500);
     }
-
-    setTimeout(() => {
-      loading.value = false;
-    }, 500);
   }
 
   function formatHigherDeptOptions(treeList) {
@@ -110,6 +112,7 @@ export function useDept() {
       title: `${title}部门`,
       props: {
         formInline: {
+          id: row?.id ?? "",
           higherDeptOptions: formatHigherDeptOptions(cloneDeep(dataList.value)),
           parentId: row?.parentId ?? 0,
           name: row?.name ?? "",
@@ -127,26 +130,50 @@ export function useDept() {
       fullscreenIcon: true,
       closeOnClickModal: false,
       contentRenderer: () => h(editForm, { ref: formRef, formInline: null }),
-      beforeSure: (done, { options }) => {
+      beforeSure: async (done, { options }) => {
         const FormRef = formRef.value.getRef();
         const curData = options.props.formInline as FormItemProps;
         function chores() {
           message(`您${title}了部门名称为${curData.name}的这条数据`, {
             type: "success"
           });
-          done(); // 关闭弹框
-          onSearch(); // 刷新表格数据
+          done();
+          onSearch();
         }
-        FormRef.validate(valid => {
+        FormRef.validate(async valid => {
           if (valid) {
-            console.log("curData", curData);
-            // 表单规则校验通过
-            if (title === "新增") {
-              // 实际开发先调用新增接口，再进行下面操作
-              chores();
-            } else {
-              // 实际开发先调用修改接口，再进行下面操作
-              chores();
+            try {
+              if (title === "新增") {
+                const res = await createDept({
+                  parentId: curData.parentId || 0,
+                  name: curData.name,
+                  principal: curData.principal || undefined,
+                  phone: String(curData.phone) || undefined,
+                  email: curData.email || undefined,
+                  sort: curData.sort ?? 0,
+                  status: curData.status ?? 1,
+                  remark: curData.remark || undefined
+                });
+                if (res.code === 200) {
+                  chores();
+                }
+              } else {
+                const res = await updateDept(curData.id, {
+                  parentId: curData.parentId,
+                  name: curData.name,
+                  principal: curData.principal || undefined,
+                  phone: String(curData.phone) || undefined,
+                  email: curData.email || undefined,
+                  sort: curData.sort,
+                  status: curData.status,
+                  remark: curData.remark || undefined
+                });
+                if (res.code === 200) {
+                  chores();
+                }
+              }
+            } catch {
+              message(`${title}部门失败`, { type: "error" });
             }
           }
         });
@@ -154,9 +181,16 @@ export function useDept() {
     });
   }
 
-  function handleDelete(row) {
-    message(`您删除了部门名称为${row.name}的这条数据`, { type: "success" });
-    onSearch();
+  async function handleDelete(row) {
+    try {
+      const res = await deleteDept(row.id);
+      if (res.code === 200) {
+        message(`已删除部门 ${row.name}`, { type: "success" });
+        onSearch();
+      }
+    } catch {
+      message("删除部门失败", { type: "error" });
+    }
   }
 
   onMounted(() => {

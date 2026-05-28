@@ -23,11 +23,9 @@ export const usePermissionStore = defineStore("pure-permission", {
     cachePageList: []
   }),
   actions: {
-    /** 组装整体路由生成的菜单 */
+    /** 组装整体路由生成的菜单（由后端返回的 routes 全权控制） */
     handleWholeMenus(routes: any[]) {
-      this.wholeMenus = filterNoPermissionTree(
-        filterTree(ascending(this.constantMenus.concat(routes)))
-      );
+      this.wholeMenus = filterNoPermissionTree(filterTree(ascending(routes)));
       this.flatteningRoutes = formatFlatteningRoutes(
         this.constantMenus.concat(routes) as any
       );

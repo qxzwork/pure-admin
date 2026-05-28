@@ -266,7 +266,7 @@ export function useUser(tableRef: Ref, treeRef: Ref) {
   /** 批量删除 */
   async function onbatchDel() {
     const curSelected = tableRef.value.getTableRef().getSelectionRows();
-    const ids = getKeyList(curSelected, "id") as number[];
+    const ids = getKeyList(curSelected, "id") as string[];
     try {
       for (const id of ids) {
         await deleteUser(id);
@@ -293,9 +293,9 @@ export function useUser(tableRef: Ref, treeRef: Ref) {
       const { code, data } = res;
       if (code === 200) {
         dataList.value = data.records;
-        pagination.total = data.total;
-        pagination.pageSize = data.size;
-        pagination.currentPage = data.current;
+        pagination.total = Number(data.total);
+        pagination.pageSize = Number(data.size);
+        pagination.currentPage = Number(data.current);
       } else {
         console.warn("[用户管理] 后端返回非200 code:", code);
       }
@@ -336,9 +336,10 @@ export function useUser(tableRef: Ref, treeRef: Ref) {
       title: `${title}用户`,
       props: {
         formInline: {
+          id: row?.id ?? "",
           title,
           higherDeptOptions: formatHigherDeptOptions(higherDeptOptions.value),
-          parentId: row?.dept.id ?? 0,
+          parentId: row?.dept?.id ?? 0,
           nickname: row?.nickname ?? "",
           username: row?.username ?? "",
           password: row?.password ?? "",
@@ -515,7 +516,7 @@ export function useUser(tableRef: Ref, treeRef: Ref) {
 
   /** 分配角色 */
   async function handleRole(row) {
-    let ids: number[] = [];
+    let ids: string[] = [];
     try {
       const res = await getRoleIds(row.id);
       if (res.code === 200) {
@@ -560,10 +561,14 @@ export function useUser(tableRef: Ref, treeRef: Ref) {
     onSearch();
 
     // 归属部门
-    const { code, data } = await getDeptList();
-    if (code === 0) {
-      higherDeptOptions.value = handleTree(data);
-      treeData.value = handleTree(data);
+    try {
+      const deptRes = await getDeptList();
+      if (deptRes.code === 200) {
+        higherDeptOptions.value = handleTree(deptRes.data ?? []);
+        treeData.value = handleTree(deptRes.data ?? []);
+      }
+    } catch {
+      // 获取部门列表失败
     }
 
     treeLoading.value = false;

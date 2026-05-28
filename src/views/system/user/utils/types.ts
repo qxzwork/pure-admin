@@ -1,5 +1,5 @@
 interface FormItemProps {
-  id?: number;
+  id?: string;
   /** 用于判断是`新增`还是`修改` */
   title: string;
   higherDeptOptions: Record<string, unknown>[];
@@ -27,7 +27,7 @@ interface RoleFormItemProps {
   /** 角色列表 */
   roleOptions: any[];
   /** 选中的角色ID列表 */
-  ids: number[];
+  ids: string[];
 }
 interface RoleFormProps {
   formInline: RoleFormItemProps;

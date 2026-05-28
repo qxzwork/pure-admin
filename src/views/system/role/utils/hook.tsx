@@ -9,8 +9,16 @@ import { addDialog } from "@/components/ReDialog";
 import type { FormItemProps } from "../utils/types";
 import type { PaginationProps } from "@pureadmin/table";
 import { getKeyList, deviceDetection } from "@pureadmin/utils";
-import { getRoleList, getRoleMenu, getRoleMenuIds } from "@/api/system";
-import { type Ref, reactive, ref, onMounted, h, toRaw, watch } from "vue";
+import {
+  getRoleList,
+  createRole,
+  updateRole,
+  deleteRole,
+  getPermissionList,
+  getRolePermissionIds,
+  setRolePermissions
+} from "@/api/system";
+import { type Ref, reactive, ref, onMounted, h, watch } from "vue";
 
 export function useRole(treeRef: Ref) {
   const form = reactive({
@@ -49,11 +57,11 @@ export function useRole(treeRef: Ref) {
     },
     {
       label: "角色名称",
-      prop: "name"
+      prop: "roleName"
     },
     {
       label: "角色标识",
-      prop: "code"
+      prop: "roleCode"
     },
     {
       label: "状态",
@@ -75,7 +83,7 @@ export function useRole(treeRef: Ref) {
     },
     {
       label: "备注",
-      prop: "remark",
+      prop: "description",
       minWidth: 160
     },
     {
@@ -107,7 +115,7 @@ export function useRole(treeRef: Ref) {
       `确认要<strong>${
         row.status === 0 ? "停用" : "启用"
       }</strong><strong style='color:var(--el-color-primary)'>${
-        row.name
+        row.roleName
       }</strong>吗?`,
       "系统提示",
       {
@@ -118,35 +126,48 @@ export function useRole(treeRef: Ref) {
         draggable: true
       }
     )
-      .then(() => {
+      .then(async () => {
         switchLoadMap.value[index] = Object.assign(
           {},
           switchLoadMap.value[index],
-          {
-            loading: true
-          }
+          { loading: true }
         );
-        setTimeout(() => {
+        try {
+          const res = await updateRole(row.id, {
+            roleName: row.name,
+            status: row.status
+          });
+          if (res.code === 200) {
+            message(`已${row.status === 0 ? "停用" : "启用"}${row.roleName}`, {
+              type: "success"
+            });
+          }
+        } catch {
+          message("修改状态失败", { type: "error" });
+          row.status === 0 ? (row.status = 1) : (row.status = 0);
+        } finally {
           switchLoadMap.value[index] = Object.assign(
             {},
             switchLoadMap.value[index],
-            {
-              loading: false
-            }
+            { loading: false }
           );
-          message(`已${row.status === 0 ? "停用" : "启用"}${row.name}`, {
-            type: "success"
-          });
-        }, 300);
+        }
       })
       .catch(() => {
         row.status === 0 ? (row.status = 1) : (row.status = 0);
       });
   }
 
-  function handleDelete(row) {
-    message(`您删除了角色名称为${row.name}的这条数据`, { type: "success" });
-    onSearch();
+  async function handleDelete(row) {
+    try {
+      const res = await deleteRole(row.id);
+      if (res.code === 200) {
+        message(`已删除角色 ${row.roleName}`, { type: "success" });
+        onSearch();
+      }
+    } catch {
+      message("删除角色失败", { type: "error" });
+    }
   }
 
   function handleSizeChange(val: number) {
@@ -163,17 +184,29 @@ export function useRole(treeRef: Ref) {
 
   async function onSearch() {
     loading.value = true;
-    const { code, data } = await getRoleList(toRaw(form));
-    if (code === 0) {
-      dataList.value = data.list;
-      pagination.total = data.total;
-      pagination.pageSize = data.pageSize;
-      pagination.currentPage = data.currentPage;
+    try {
+      const params = {
+        current: pagination.currentPage,
+        size: pagination.pageSize,
+        roleName: form.name || undefined,
+        roleCode: form.code || undefined,
+        status: form.status !== "" ? Number(form.status) : undefined
+      };
+      const res = await getRoleList(params);
+      const { code, data } = res;
+      if (code === 200) {
+        dataList.value = data.records;
+        pagination.total = Number(data.total);
+        pagination.pageSize = Number(data.size);
+        pagination.currentPage = Number(data.current);
+      }
+    } catch {
+      message("获取角色列表失败", { type: "error" });
+    } finally {
+      setTimeout(() => {
+        loading.value = false;
+      }, 500);
     }
-
-    setTimeout(() => {
-      loading.value = false;
-    }, 500);
   }
 
   const resetForm = formEl => {
@@ -187,9 +220,10 @@ export function useRole(treeRef: Ref) {
       title: `${title}角色`,
       props: {
         formInline: {
-          name: row?.name ?? "",
-          code: row?.code ?? "",
-          remark: row?.remark ?? ""
+          id: row?.id ?? "",
+          name: row?.roleName ?? "",
+          code: row?.roleCode ?? "",
+          remark: row?.description ?? ""
         }
       },
       width: "40%",
@@ -198,26 +232,39 @@ export function useRole(treeRef: Ref) {
       fullscreenIcon: true,
       closeOnClickModal: false,
       contentRenderer: () => h(editForm, { ref: formRef, formInline: null }),
-      beforeSure: (done, { options }) => {
+      beforeSure: async (done, { options }) => {
         const FormRef = formRef.value.getRef();
         const curData = options.props.formInline as FormItemProps;
         function chores() {
           message(`您${title}了角色名称为${curData.name}的这条数据`, {
             type: "success"
           });
-          done(); // 关闭弹框
-          onSearch(); // 刷新表格数据
+          done();
+          onSearch();
         }
-        FormRef.validate(valid => {
+        FormRef.validate(async valid => {
           if (valid) {
-            console.log("curData", curData);
-            // 表单规则校验通过
-            if (title === "新增") {
-              // 实际开发先调用新增接口，再进行下面操作
-              chores();
-            } else {
-              // 实际开发先调用修改接口，再进行下面操作
-              chores();
+            try {
+              if (title === "新增") {
+                const res = await createRole({
+                  roleName: curData.name,
+                  roleCode: curData.code,
+                  description: curData.remark || undefined
+                });
+                if (res.code === 200) {
+                  chores();
+                }
+              } else {
+                const res = await updateRole(curData.id, {
+                  roleName: curData.name,
+                  description: curData.remark || undefined
+                });
+                if (res.code === 200) {
+                  chores();
+                }
+              }
+            } catch {
+              message(`${title}角色失败`, { type: "error" });
             }
           }
         });
@@ -231,9 +278,13 @@ export function useRole(treeRef: Ref) {
     if (id) {
       curRow.value = row;
       isShow.value = true;
-      const { code, data } = await getRoleMenuIds({ id });
-      if (code === 0) {
-        treeRef.value.setCheckedKeys(data);
+      try {
+        const res = await getRolePermissionIds(id);
+        if (res.code === 200) {
+          treeRef.value.setCheckedKeys(res.data ?? []);
+        }
+      } catch {
+        message("获取角色权限失败", { type: "error" });
       }
     } else {
       curRow.value = null;
@@ -250,13 +301,19 @@ export function useRole(treeRef: Ref) {
   }
 
   /** 菜单权限-保存 */
-  function handleSave() {
-    const { id, name } = curRow.value;
-    // 根据用户 id 调用实际项目中菜单权限修改接口
-    console.log(id, treeRef.value.getCheckedKeys());
-    message(`角色名称为${name}的菜单权限修改成功`, {
-      type: "success"
-    });
+  async function handleSave() {
+    const { id, roleName } = curRow.value;
+    const checkedKeys = treeRef.value.getCheckedKeys();
+    try {
+      const res = await setRolePermissions(id, checkedKeys);
+      if (res.code === 200) {
+        message(`角色名称为${roleName}的菜单权限修改成功`, {
+          type: "success"
+        });
+      }
+    } catch {
+      message("保存权限失败", { type: "error" });
+    }
   }
 
   /** 数据权限 可自行开发 */
@@ -272,10 +329,14 @@ export function useRole(treeRef: Ref) {
 
   onMounted(async () => {
     onSearch();
-    const { code, data } = await getRoleMenu();
-    if (code === 0) {
-      treeIds.value = getKeyList(data, "id");
-      treeData.value = handleTree(data);
+    try {
+      const { code, data } = await getPermissionList();
+      if (code === 200) {
+        treeIds.value = getKeyList(data, "id");
+        treeData.value = handleTree(data);
+      }
+    } catch {
+      // 获取权限树失败
     }
   });
 

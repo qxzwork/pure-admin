@@ -1,7 +1,7 @@
 import editForm from "../form.vue";
 import { handleTree } from "@/utils/tree";
 import { message } from "@/utils/message";
-import { getMenuList } from "@/api/system";
+import { getMenuList, createMenu, updateMenu, deleteMenu } from "@/api/system";
 import { transformI18n } from "@/plugins/i18n";
 import { addDialog } from "@/components/ReDialog";
 import { reactive, ref, onMounted, h } from "vue";
@@ -106,21 +106,24 @@ export function useMenu() {
 
   async function onSearch() {
     loading.value = true;
-    const { code, data } = await getMenuList(); // 这里是返回一维数组结构，前端自行处理成树结构，返回格式要求：唯一id加父节点parentId，parentId取父节点id
-    if (code === 0) {
-      let newData = data;
-      if (!isAllEmpty(form.title)) {
-        // 前端搜索菜单名称
-        newData = newData.filter(item =>
-          transformI18n(item.title).includes(form.title)
-        );
+    try {
+      const { code, data } = await getMenuList();
+      if (code === 200) {
+        let newData = data ?? [];
+        if (!isAllEmpty(form.title)) {
+          newData = newData.filter(item =>
+            transformI18n(item.title).includes(form.title)
+          );
+        }
+        dataList.value = handleTree(newData);
       }
-      dataList.value = handleTree(newData); // 处理成树结构
+    } catch {
+      message("获取菜单列表失败", { type: "error" });
+    } finally {
+      setTimeout(() => {
+        loading.value = false;
+      }, 500);
     }
-
-    setTimeout(() => {
-      loading.value = false;
-    }, 500);
   }
 
   function formatHigherMenuOptions(treeList) {
@@ -139,6 +142,7 @@ export function useMenu() {
       title: `${title}菜单`,
       props: {
         formInline: {
+          id: row?.id ?? "",
           menuType: row?.menuType ?? 0,
           higherMenuOptions: formatHigherMenuOptions(cloneDeep(dataList.value)),
           parentId: row?.parentId ?? 0,
@@ -169,7 +173,7 @@ export function useMenu() {
       fullscreenIcon: true,
       closeOnClickModal: false,
       contentRenderer: () => h(editForm, { ref: formRef, formInline: null }),
-      beforeSure: (done, { options }) => {
+      beforeSure: async (done, { options }) => {
         const FormRef = formRef.value.getRef();
         const curData = options.props.formInline as FormItemProps;
         function chores() {
@@ -179,19 +183,69 @@ export function useMenu() {
               type: "success"
             }
           );
-          done(); // 关闭弹框
-          onSearch(); // 刷新表格数据
+          done();
+          onSearch();
         }
-        FormRef.validate(valid => {
+        FormRef.validate(async valid => {
           if (valid) {
-            console.log("curData", curData);
-            // 表单规则校验通过
-            if (title === "新增") {
-              // 实际开发先调用新增接口，再进行下面操作
-              chores();
-            } else {
-              // 实际开发先调用修改接口，再进行下面操作
-              chores();
+            try {
+              if (title === "新增") {
+                const res = await createMenu({
+                  menuType: curData.menuType,
+                  parentId: curData.parentId,
+                  title: curData.title,
+                  name: curData.name || undefined,
+                  path: curData.path || undefined,
+                  component: curData.component || undefined,
+                  rank: curData.rank ?? 99,
+                  redirect: curData.redirect || undefined,
+                  icon: curData.icon || undefined,
+                  extraIcon: curData.extraIcon || undefined,
+                  enterTransition: curData.enterTransition || undefined,
+                  leaveTransition: curData.leaveTransition || undefined,
+                  activePath: curData.activePath || undefined,
+                  auths: curData.auths || undefined,
+                  frameSrc: curData.frameSrc || undefined,
+                  frameLoading: curData.frameLoading ?? true,
+                  keepAlive: curData.keepAlive ?? false,
+                  hiddenTag: curData.hiddenTag ?? false,
+                  fixedTag: curData.fixedTag ?? false,
+                  showLink: curData.showLink ?? true,
+                  showParent: curData.showParent ?? false
+                });
+                if (res.code === 200) {
+                  chores();
+                }
+              } else {
+                const res = await updateMenu(curData.id, {
+                  menuType: curData.menuType,
+                  parentId: curData.parentId,
+                  title: curData.title,
+                  name: curData.name || undefined,
+                  path: curData.path || undefined,
+                  component: curData.component || undefined,
+                  rank: curData.rank ?? 99,
+                  redirect: curData.redirect || undefined,
+                  icon: curData.icon || undefined,
+                  extraIcon: curData.extraIcon || undefined,
+                  enterTransition: curData.enterTransition || undefined,
+                  leaveTransition: curData.leaveTransition || undefined,
+                  activePath: curData.activePath || undefined,
+                  auths: curData.auths || undefined,
+                  frameSrc: curData.frameSrc || undefined,
+                  frameLoading: curData.frameLoading ?? true,
+                  keepAlive: curData.keepAlive ?? false,
+                  hiddenTag: curData.hiddenTag ?? false,
+                  fixedTag: curData.fixedTag ?? false,
+                  showLink: curData.showLink ?? true,
+                  showParent: curData.showParent ?? false
+                });
+                if (res.code === 200) {
+                  chores();
+                }
+              }
+            } catch {
+              message(`${title}菜单失败`, { type: "error" });
             }
           }
         });
@@ -199,11 +253,18 @@ export function useMenu() {
     });
   }
 
-  function handleDelete(row) {
-    message(`您删除了菜单名称为${transformI18n(row.title)}的这条数据`, {
-      type: "success"
-    });
-    onSearch();
+  async function handleDelete(row) {
+    try {
+      const res = await deleteMenu(row.id);
+      if (res.code === 200) {
+        message(`已删除菜单 ${transformI18n(row.title)}`, {
+          type: "success"
+        });
+        onSearch();
+      }
+    } catch {
+      message("删除菜单失败", { type: "error" });
+    }
   }
 
   onMounted(() => {

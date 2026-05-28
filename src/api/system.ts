@@ -2,7 +2,7 @@ import { http } from "@/utils/http";
 
 /** 用户管理 - 后端 UserDTO */
 export type UserRecord = {
-  id: number;
+  id: string;
   username: string;
   password?: string;
   nickname: string;
@@ -10,19 +10,19 @@ export type UserRecord = {
   phone: string;
   avatar: string;
   status: number;
-  roleIds: number[];
+  roleIds: string[];
   createTime: string;
   updateTime: string;
 };
 
 /** 角色管理 - 后端 RoleDTO */
 export type RoleRecord = {
-  id: number;
+  id: string;
   roleName: string;
   roleCode: string;
   description: string;
   status: number;
-  permissionIds: number[];
+  permissionIds: string[];
   createTime: string;
   updateTime: string;
 };
@@ -71,14 +71,14 @@ export const createUser = (data: {
   phone?: string;
   status?: number;
 }) => {
-  return http.request<SimpleResult<number>>("post", "/api/management/users", {
+  return http.request<SimpleResult<string>>("post", "/api/management/users", {
     data
   });
 };
 
 /** 编辑用户 */
 export const updateUser = (
-  id: number,
+  id: string,
   data: {
     username: string;
     nickname: string;
@@ -97,7 +97,7 @@ export const updateUser = (
 };
 
 /** 删除用户 */
-export const deleteUser = (id: number) => {
+export const deleteUser = (id: string) => {
   return http.request<SimpleResult<null>>(
     "delete",
     `/api/management/users/${id}`
@@ -105,24 +105,24 @@ export const deleteUser = (id: number) => {
 };
 
 /** 重置密码 */
-export const resetUserPassword = (id: number, newPassword: string) => {
+export const resetUserPassword = (id: string, newPassword: string) => {
   return http.request<SimpleResult<null>>(
     "put",
     `/api/management/users/${id}/password`,
-    { data: { key: newPassword } }
+    { data: { newPassword } }
   );
 };
 
 /** 获取用户角色ID列表 */
-export const getRoleIds = (userId: number) => {
-  return http.request<SimpleResult<number[]>>(
+export const getRoleIds = (userId: string) => {
+  return http.request<SimpleResult<string[]>>(
     "get",
     `/api/management/users/${userId}/roles`
   );
 };
 
 /** 设置用户角色 */
-export const setUserRoles = (userId: number, roleIds: number[]) => {
+export const setUserRoles = (userId: string, roleIds: string[]) => {
   return http.request<SimpleResult<null>>(
     "put",
     `/api/management/users/${userId}/roles`,
@@ -132,11 +132,190 @@ export const setUserRoles = (userId: number, roleIds: number[]) => {
 
 // ========== 角色管理 API ==========
 
+/** 角色分页响应 */
+type RolePageResult = {
+  code: number;
+  message: string;
+  data: {
+    records: RoleRecord[];
+    total: number;
+    size: number;
+    current: number;
+    pages: number;
+  };
+  timestamp: number;
+};
+
+/** 分页查询角色列表 */
+export const getRoleList = (params: {
+  current?: number;
+  size?: number;
+  roleName?: string;
+  roleCode?: string;
+  status?: number;
+}) => {
+  return http.request<RolePageResult>("get", "/api/management/roles", {
+    params
+  });
+};
+
 /** 查询所有角色（用于下拉选择） */
 export const getAllRoleList = () => {
   return http.request<SimpleResult<RoleRecord[]>>(
     "get",
     "/api/management/roles/all"
+  );
+};
+
+/** 新增角色 */
+export const createRole = (data: {
+  roleName: string;
+  roleCode: string;
+  description?: string;
+  status?: number;
+  permissionIds?: string[];
+}) => {
+  return http.request<SimpleResult<string>>("post", "/api/management/roles", {
+    data
+  });
+};
+
+/** 编辑角色 */
+export const updateRole = (
+  id: string,
+  data: {
+    roleName?: string;
+    description?: string;
+    status?: number;
+  }
+) => {
+  return http.request<SimpleResult<null>>(
+    "put",
+    `/api/management/roles/${id}`,
+    { data }
+  );
+};
+
+/** 删除角色 */
+export const deleteRole = (id: string) => {
+  return http.request<SimpleResult<null>>(
+    "delete",
+    `/api/management/roles/${id}`
+  );
+};
+
+/** 获取角色权限ID列表 */
+export const getRolePermissionIds = (id: string) => {
+  return http.request<SimpleResult<string[]>>(
+    "get",
+    `/api/management/roles/${id}/permissions`
+  );
+};
+
+/** 设置角色权限 */
+export const setRolePermissions = (id: string, permissionIds: string[]) => {
+  return http.request<SimpleResult<null>>(
+    "put",
+    `/api/management/roles/${id}/permissions`,
+    { data: permissionIds }
+  );
+};
+
+// ========== 权限管理 API（角色权限树用） ==========
+
+/** 权限记录类型 */
+export type PermissionRecord = {
+  id: string;
+  permissionName: string;
+  title: string;
+  menuType: number;
+  permissionCode: string;
+  permissionType: string;
+  parentId: number;
+  path: string;
+  icon: string;
+  sortOrder: number;
+  status: number;
+  createTime: string;
+  children: PermissionRecord[];
+};
+
+/** 获取权限列表（平铺一维数组，用于角色权限分配树） */
+export const getPermissionList = () => {
+  return http.request<SimpleResult<PermissionRecord[]>>(
+    "get",
+    "/api/management/permissions"
+  );
+};
+
+// ========== 部门管理 API ==========
+
+/** 部门记录类型 - 匹配后端 DeptDTO */
+export type DeptRecord = {
+  id: string;
+  parentId: number;
+  name: string;
+  principal: string;
+  phone: string;
+  email: string;
+  sort: number;
+  status: number;
+  remark: string;
+  createTime: string;
+  updateTime: string;
+  children: DeptRecord[];
+};
+
+/** 获取部门列表（平铺一维数组，前端自行处理成树结构） */
+export const getDeptList = () => {
+  return http.request<SimpleResult<DeptRecord[]>>(
+    "get",
+    "/api/management/depts"
+  );
+};
+
+/** 新增部门 */
+export const createDept = (data: {
+  parentId?: number;
+  name: string;
+  principal?: string;
+  phone?: string;
+  email?: string;
+  sort?: number;
+  status?: number;
+  remark?: string;
+}) => {
+  return http.request<SimpleResult<string>>("post", "/api/management/depts", {
+    data
+  });
+};
+
+/** 编辑部门 */
+export const updateDept = (
+  id: string,
+  data: {
+    parentId?: number;
+    name?: string;
+    principal?: string;
+    phone?: string;
+    email?: string;
+    sort?: number;
+    status?: number;
+    remark?: string;
+  }
+) => {
+  return http.request<SimpleResult<null>>(
+    "put",
+    `/api/management/depts/${id}`,
+    { data }
+  );
+};
+
+/** 删除部门（会级联删除子部门） */
+export const deleteDept = (id: string) => {
+  return http.request<SimpleResult<null>>(
+    "delete",
+    `/api/management/depts/${id}`
   );
 };
 
@@ -163,19 +342,123 @@ type ResultTable = {
   };
 };
 
-/** 获取系统管理-角色管理列表 */
-export const getRoleList = (data?: object) => {
-  return http.request<ResultTable>("post", "/role", { data });
+// ========== 菜单管理 API ==========
+
+/** 菜单记录类型 - 匹配后端 MenuDTO */
+export type MenuRecord = {
+  id: string;
+  menuType: number;
+  parentId: number;
+  title: string;
+  name: string;
+  path: string;
+  component: string;
+  rank: number;
+  redirect: string;
+  icon: string;
+  extraIcon: string;
+  enterTransition: string;
+  leaveTransition: string;
+  activePath: string;
+  auths: string;
+  frameSrc: string;
+  frameLoading: boolean;
+  keepAlive: boolean;
+  hiddenTag: boolean;
+  fixedTag: boolean;
+  showLink: boolean;
+  showParent: boolean;
+  status: number;
+  createTime: string;
+  updateTime: string;
+  children: MenuRecord[];
 };
 
-/** 获取系统管理-菜单管理列表 */
-export const getMenuList = (data?: object) => {
-  return http.request<Result>("post", "/menu", { data });
+/** 获取菜单列表（平铺一维数组，前端自行处理成树结构） */
+export const getMenuList = () => {
+  return http.request<SimpleResult<MenuRecord[]>>(
+    "get",
+    "/api/management/menus"
+  );
 };
 
-/** 获取系统管理-部门管理列表 */
-export const getDeptList = (data?: object) => {
-  return http.request<Result>("post", "/dept", { data });
+/** 根据ID获取菜单 */
+export const getMenuById = (id: string) => {
+  return http.request<SimpleResult<MenuRecord>>(
+    "get",
+    `/api/management/menus/${id}`
+  );
+};
+
+/** 新增菜单 */
+export const createMenu = (data: {
+  menuType: number;
+  parentId: number;
+  title: string;
+  name?: string;
+  path?: string;
+  component?: string;
+  rank?: number;
+  redirect?: string;
+  icon?: string;
+  extraIcon?: string;
+  enterTransition?: string;
+  leaveTransition?: string;
+  activePath?: string;
+  auths?: string;
+  frameSrc?: string;
+  frameLoading?: boolean;
+  keepAlive?: boolean;
+  hiddenTag?: boolean;
+  fixedTag?: boolean;
+  showLink?: boolean;
+  showParent?: boolean;
+}) => {
+  return http.request<SimpleResult<string>>("post", "/api/management/menus", {
+    data
+  });
+};
+
+/** 编辑菜单 */
+export const updateMenu = (
+  id: string,
+  data: {
+    menuType?: number;
+    parentId?: number;
+    title?: string;
+    name?: string;
+    path?: string;
+    component?: string;
+    rank?: number;
+    redirect?: string;
+    icon?: string;
+    extraIcon?: string;
+    enterTransition?: string;
+    leaveTransition?: string;
+    activePath?: string;
+    auths?: string;
+    frameSrc?: string;
+    frameLoading?: boolean;
+    keepAlive?: boolean;
+    hiddenTag?: boolean;
+    fixedTag?: boolean;
+    showLink?: boolean;
+    showParent?: boolean;
+  }
+) => {
+  return http.request<SimpleResult<null>>(
+    "put",
+    `/api/management/menus/${id}`,
+    { data }
+  );
+};
+
+/** 删除菜单（会级联删除子菜单） */
+export const deleteMenu = (id: string) => {
+  return http.request<SimpleResult<null>>(
+    "delete",
+    `/api/management/menus/${id}`
+  );
 };
 
 /** 获取系统监控-在线用户列表 */
@@ -201,14 +484,4 @@ export const getSystemLogsList = (data?: object) => {
 /** 获取系统监控-系统日志-根据 id 查日志详情 */
 export const getSystemLogsDetail = (data?: object) => {
   return http.request<Result>("post", "/system-logs-detail", { data });
-};
-
-/** 获取角色管理-权限-菜单权限 */
-export const getRoleMenu = (data?: object) => {
-  return http.request<Result>("post", "/role-menu", { data });
-};
-
-/** 获取角色管理-权限-菜单权限-根据角色 id 查对应菜单 */
-export const getRoleMenuIds = (data?: object) => {
-  return http.request<Result>("post", "/role-menu-ids", { data });
 };
