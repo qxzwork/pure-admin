@@ -10,6 +10,8 @@ export type UserRecord = {
   phone: string;
   avatar: string;
   status: number;
+  deptId: string;
+  remark: string;
   roleIds: string[];
   createTime: string;
   updateTime: string;
@@ -70,6 +72,8 @@ export const createUser = (data: {
   email?: string;
   phone?: string;
   status?: number;
+  deptId?: string;
+  remark?: string;
 }) => {
   return http.request<SimpleResult<string>>("post", "/api/management/users", {
     data
@@ -85,6 +89,8 @@ export const updateUser = (
     email?: string;
     phone?: string;
     status?: number;
+    deptId?: string;
+    remark?: string;
   }
 ) => {
   return http.request<SimpleResult<null>>(

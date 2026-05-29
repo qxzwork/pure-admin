@@ -376,7 +376,11 @@ export function useUser(tableRef: Ref, treeRef: Ref) {
                   nickname: curData.nickname,
                   email: curData.email || undefined,
                   phone: String(curData.phone) || undefined,
-                  status: curData.status ?? 1
+                  status: curData.status ?? 1,
+                  deptId: curData.parentId
+                    ? String(curData.parentId)
+                    : undefined,
+                  remark: curData.remark || undefined
                 });
                 if (res.code === 200) {
                   chores();
@@ -391,7 +395,11 @@ export function useUser(tableRef: Ref, treeRef: Ref) {
                   nickname: curData.nickname,
                   email: curData.email || undefined,
                   phone: String(curData.phone) || undefined,
-                  status: curData.status ?? 1
+                  status: curData.status ?? 1,
+                  deptId: curData.parentId
+                    ? String(curData.parentId)
+                    : undefined,
+                  remark: curData.remark || undefined
                 });
                 if (res.code === 200) {
                   chores();
