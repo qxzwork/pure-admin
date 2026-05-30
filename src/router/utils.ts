@@ -160,7 +160,8 @@ function handleAsyncRoutes(routeList) {
     usePermissionStoreHook().handleWholeMenus(routeList);
   } else {
     const validRoutes = addAsyncRoutes(routeList);
-    formatFlatteningRoutes(validRoutes).map((v: RouteRecordRaw) => {
+    const flatRoutes = formatFlatteningRoutes(validRoutes);
+    flatRoutes.map((v: RouteRecordRaw) => {
       // 防止重复添加路由
       if (
         router.options.routes[0].children.findIndex(
@@ -327,11 +328,15 @@ function addAsyncRoutes(arrRoutes: Array<RouteRecordRaw>) {
       v.name = (v.children[0].name as string) + "Parent";
     if (v.meta?.frameSrc) {
       v.component = IFrame;
+    } else if (v?.children && v.children.length && !v.component) {
+      // 父级目录（后端未返回 component 且有子路由），不解析组件，仅做 redirect
+      // 不设置 component，避免错误匹配
     } else {
       // 对后端传component组件路径和不传做兼容（如果后端传component组件路径，那么path可以随便写，如果不传，component组件路径会跟path保持一致）
-      const index = v?.component
-        ? modulesRoutesKeys.findIndex(ev => ev.includes(v.component as any))
-        : modulesRoutesKeys.findIndex(ev => ev.includes(v.path));
+      const searchKey = v?.component ? v.component : v.path;
+      const index = modulesRoutesKeys.findIndex(ev =>
+        ev.includes(searchKey as any)
+      );
       v.component = modulesRoutes[modulesRoutesKeys[index]];
     }
     if (v?.children && v.children.length) {
