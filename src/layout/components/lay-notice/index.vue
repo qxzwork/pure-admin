@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { useI18n } from "vue-i18n";
-import { ref, computed } from "vue";
+import { ref, computed, onMounted } from "vue";
 import { noticesData } from "./data";
 import NoticeList from "./components/NoticeList.vue";
+import { http } from "@/utils/http";
 
 import BellIcon from "~icons/lucide/bell";
 import ArrowRightIcon from "~icons/ri/arrow-right-s-line";
@@ -11,6 +12,17 @@ const { t } = useI18n();
 const dropdownRef = ref();
 const notices = ref(noticesData);
 const activeKey = ref(noticesData[0]?.key);
+const unreadCount = ref(0);
+
+onMounted(async () => {
+  try {
+    const res = await http.request<any>(
+      "get",
+      "/api/auth/notifications/unread-count"
+    );
+    if (res?.code === 200) unreadCount.value = Number(res.data ?? 0);
+  } catch {}
+});
 
 const getLabel = computed(
   () => item =>
@@ -49,9 +61,15 @@ const onMarkAsRead = () => {
     <span
       :class="['dropdown-badge', 'navbar-bg-hover', 'select-none', 'mr-1.75']"
     >
-      <el-badge is-dot :hidden="!hasAnyNoticeData">
+      <el-badge is-dot :hidden="!hasAnyNoticeData && unreadCount === 0">
         <span class="header-notice-icon">
           <IconifyIconOffline :icon="BellIcon" />
+          <span
+            v-if="unreadCount > 0"
+            class="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] rounded-full min-w-4 h-4 flex-c px-1"
+          >
+            {{ unreadCount > 99 ? "99+" : unreadCount }}
+          </span>
         </span>
       </el-badge>
     </span>

@@ -2,7 +2,7 @@
 import { formUpload } from "@/api/mock";
 import { message } from "@/utils/message";
 import { onMounted, reactive, ref } from "vue";
-import { type UserInfo, getMine } from "@/api/user";
+import { http } from "@/utils/http";
 import type { FormInstance, FormRules } from "element-plus";
 import ReCropperPreview from "@/components/ReCropperPreview";
 import { createFormData, deviceDetection } from "@pureadmin/utils";
@@ -27,7 +27,7 @@ const userInfos = reactive({
   description: ""
 });
 
-const rules = reactive<FormRules<UserInfo>>({
+const rules = reactive<FormRules>({
   nickname: [{ required: true, message: "昵称必填", trigger: "blur" }]
 });
 
@@ -90,8 +90,25 @@ const handleSubmitImage = () => {
 const onSubmit = async (formEl: FormInstance) => {
   await formEl.validate((valid, fields) => {
     if (valid) {
-      console.log(userInfos);
-      message("更新信息成功", { type: "success" });
+      http
+        .request<any>("put", "/api/auth/mine", {
+          data: {
+            nickname: userInfos.nickname,
+            email: userInfos.email,
+            phone: userInfos.phone,
+            remark: userInfos.description
+          }
+        })
+        .then(res => {
+          if (res?.code === 200) {
+            message("更新信息成功", { type: "success" });
+          } else {
+            message(res?.message ?? "更新失败", { type: "error" });
+          }
+        })
+        .catch(() => {
+          message("更新失败", { type: "error" });
+        });
     } else {
       console.log("error submit!", fields);
     }
@@ -99,9 +116,19 @@ const onSubmit = async (formEl: FormInstance) => {
 };
 
 onMounted(async () => {
-  const { code, data } = await getMine();
-  if (code === 0) {
-    Object.assign(userInfos, data);
+  try {
+    const res = await http.request<any>("get", "/api/auth/mine");
+    if (res?.code === 200 && res.data) {
+      Object.assign(userInfos, {
+        avatar: res.data.avatar ?? "",
+        nickname: res.data.nickname ?? "",
+        email: res.data.email ?? "",
+        phone: res.data.phone ?? "",
+        description: res.data.remark ?? ""
+      });
+    }
+  } catch {
+    // ignore
   }
 });
 </script>

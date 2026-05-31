@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, markRaw } from "vue";
+import { ref, markRaw, onMounted } from "vue";
 import ReCol from "@/components/ReCol";
 import { useDark, randomGradient } from "./utils";
 import WelcomeTable from "./components/table/index.vue";
@@ -8,6 +8,7 @@ import { useRenderFlicker } from "@/components/ReFlicker";
 import { ChartBar, ChartLine, ChartRound } from "./components/charts";
 import Segmented, { type OptionsType } from "@/components/ReSegmented";
 import { chartData, barChartData, progressData, latestNewsData } from "./data";
+import { http } from "@/utils/http";
 
 defineOptions({
   name: "Welcome"
@@ -24,6 +25,29 @@ const optionsBasis: Array<OptionsType> = [
     label: "本周"
   }
 ];
+
+// 加载真实统计数据
+onMounted(async () => {
+  try {
+    const res = await http.request<any>(
+      "get",
+      "/api/management/dashboard/stats"
+    );
+    if (res?.code === 200 && res.data) {
+      const d = res.data;
+      // 更新卡片数据
+      if (chartData[0]) chartData[0].value = d.userCount ?? 0;
+      if (chartData[1]) chartData[1].value = d.todayLogins ?? 0;
+      if (chartData[2]) chartData[2].value = d.todayRequests ?? 0;
+      if (chartData[3]) chartData[3].value = d.onlineUsers ?? 0;
+      // 更新柱状图数据（本周）
+      if (d.weeklyRequests && d.weeklyLogins) {
+        barChartData[1].requireData = d.weeklyRequests;
+        barChartData[1].questionData = d.weeklyLogins;
+      }
+    }
+  } catch {}
+});
 </script>
 
 <template>

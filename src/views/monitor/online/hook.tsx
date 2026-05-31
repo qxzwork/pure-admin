@@ -1,27 +1,12 @@
 import dayjs from "dayjs";
 import { message } from "@/utils/message";
-import { getOnlineLogsList } from "@/api/system";
-import { reactive, ref, onMounted, toRaw } from "vue";
-import type { PaginationProps } from "@pureadmin/table";
+import { http } from "@/utils/http";
+import { ref, onMounted } from "vue";
 
 export function useRole() {
-  const form = reactive({
-    username: ""
-  });
   const dataList = ref([]);
   const loading = ref(true);
-  const pagination = reactive<PaginationProps>({
-    total: 0,
-    pageSize: 10,
-    currentPage: 1,
-    background: true
-  });
   const columns: TableColumnList = [
-    {
-      label: "序号",
-      prop: "id",
-      minWidth: 60
-    },
     {
       label: "用户名",
       prop: "username",
@@ -33,18 +18,13 @@ export function useRole() {
       minWidth: 140
     },
     {
-      label: "登录地点",
-      prop: "address",
-      minWidth: 140
-    },
-    {
-      label: "操作系统",
-      prop: "system",
+      label: "浏览器",
+      prop: "browser",
       minWidth: 100
     },
     {
-      label: "浏览器类型",
-      prop: "browser",
+      label: "操作系统",
+      prop: "os",
       minWidth: 100
     },
     {
@@ -52,7 +32,7 @@ export function useRole() {
       prop: "loginTime",
       minWidth: 180,
       formatter: ({ loginTime }) =>
-        dayjs(loginTime).format("YYYY-MM-DD HH:mm:ss")
+        loginTime ? dayjs(loginTime).format("YYYY-MM-DD HH:mm:ss") : "-"
     },
     {
       label: "操作",
@@ -61,59 +41,47 @@ export function useRole() {
     }
   ];
 
-  function handleSizeChange(val: number) {
-    console.log(`${val} items per page`);
-  }
-
-  function handleCurrentChange(val: number) {
-    console.log(`current page: ${val}`);
-  }
-
-  function handleSelectionChange(val) {
-    console.log("handleSelectionChange", val);
-  }
-
-  function handleOffline(row) {
-    message(`${row.username}已被强制下线`, { type: "success" });
-    onSearch();
-  }
-
   async function onSearch() {
     loading.value = true;
-    const { code, data } = await getOnlineLogsList(toRaw(form));
-    if (code === 0) {
-      dataList.value = data.list;
-      pagination.total = data.total;
-      pagination.pageSize = data.pageSize;
-      pagination.currentPage = data.currentPage;
-    }
-
-    setTimeout(() => {
+    try {
+      const res = await http.request<any>(
+        "get",
+        "/api/management/online-users"
+      );
+      dataList.value = res?.data ?? [];
+    } catch {
+      dataList.value = [];
+    } finally {
       loading.value = false;
-    }, 500);
+    }
   }
 
-  const resetForm = formEl => {
-    if (!formEl) return;
-    formEl.resetFields();
-    onSearch();
-  };
+  async function handleOffline(row) {
+    try {
+      const res = await http.request<any>(
+        "delete",
+        `/api/management/online-users/${row.userId}`
+      );
+      if (res?.code === 200) {
+        message(`${row.username} 已被强制下线`, { type: "success" });
+        onSearch();
+      } else {
+        message(res?.message ?? "操作失败", { type: "error" });
+      }
+    } catch {
+      message("操作失败", { type: "error" });
+    }
+  }
 
   onMounted(() => {
     onSearch();
   });
 
   return {
-    form,
     loading,
     columns,
     dataList,
-    pagination,
     onSearch,
-    resetForm,
-    handleOffline,
-    handleSizeChange,
-    handleCurrentChange,
-    handleSelectionChange
+    handleOffline
   };
 }
