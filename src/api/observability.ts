@@ -54,13 +54,11 @@ export type TraceStatistics = {
 
 /** Trace 分页响应 */
 type TracePageResult = {
-  data: {
-    content: AgentTrace[];
-    total: number;
-    pages: number;
-    current: number;
-    size: number;
-  };
+  content: AgentTrace[];
+  total: number;
+  pages: number;
+  current: number;
+  size: number;
 };
 
 /** 分页查询 Trace 列表 */
