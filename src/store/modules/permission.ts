@@ -25,10 +25,13 @@ export const usePermissionStore = defineStore("pure-permission", {
   actions: {
     /** 组装整体路由生成的菜单（由后端返回的 routes 全权控制） */
     handleWholeMenus(routes: any[]) {
-      this.wholeMenus = filterNoPermissionTree(filterTree(ascending(routes)));
-      this.flatteningRoutes = formatFlatteningRoutes(
-        this.constantMenus.concat(routes) as any
+      // 仅把首页(Home)从静态菜单里并入 wholeMenus，避免 demo 静态路由全显示在 sidebar
+      const homeMenu = (this.constantMenus as any[]).filter(
+        m => m?.path === "/" && m?.name === "Home"
       );
+      const all = homeMenu.concat(routes);
+      this.wholeMenus = filterNoPermissionTree(filterTree(ascending(all)));
+      this.flatteningRoutes = formatFlatteningRoutes(all as any);
     },
     /** 监听缓存页面是否存在于标签页，不存在则删除 */
     clearCache() {
