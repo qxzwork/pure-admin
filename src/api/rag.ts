@@ -163,3 +163,39 @@ export const getRagFileText = (
 export const deleteRagFile = (id: number) => {
   return http.request<SimpleResult<null>>("delete", `/api/rag/files/${id}`);
 };
+
+// ========== RAG 配置 ==========
+
+/** 获取查询改写开关状态 */
+export const getQueryRewriteEnabled = () => {
+  return http.request<SimpleResult<boolean>>(
+    "get",
+    "/api/rag/config/query-rewrite"
+  );
+};
+
+/** 设置查询改写开关 */
+export const setQueryRewriteEnabled = (enabled: boolean) => {
+  return http.request<SimpleResult<null>>(
+    "post",
+    "/api/rag/config/query-rewrite",
+    { params: { enabled } }
+  );
+};
+
+/** 获取多轮检索开关状态 */
+export const getMultiRoundSearchEnabled = () => {
+  return http.request<SimpleResult<boolean>>(
+    "get",
+    "/api/rag/config/multi-round-search"
+  );
+};
+
+/** 设置多轮检索开关 */
+export const setMultiRoundSearchEnabled = (enabled: boolean) => {
+  return http.request<SimpleResult<null>>(
+    "post",
+    "/api/rag/config/multi-round-search",
+    { params: { enabled } }
+  );
+};

@@ -2,8 +2,39 @@
 import { ref, nextTick, onMounted } from "vue";
 import { useRenderIcon } from "@/components/ReIcon/src/hooks";
 import { getToken, formatToken } from "@/utils/auth";
+import { message } from "@/utils/message";
+import { marked } from "marked";
+import { markedHighlight } from "marked-highlight";
+import hljs from "highlight.js";
+import {
+  getQueryRewriteEnabled,
+  setQueryRewriteEnabled,
+  getMultiRoundSearchEnabled,
+  setMultiRoundSearchEnabled
+} from "@/api/rag";
 
 defineOptions({ name: "RagChat" });
+
+// 配置 marked
+marked.use(
+  markedHighlight({
+    langPrefix: "hljs language-",
+    highlight(code: string, lang: string) {
+      const language = hljs.getLanguage(lang) ? lang : "plaintext";
+      return hljs.highlight(code, { language }).value;
+    }
+  })
+);
+
+marked.setOptions({
+  breaks: true,
+  gfm: true
+});
+
+function renderMarkdown(content: string): string {
+  if (!content) return "";
+  return marked.parse(content) as string;
+}
 
 type RetrievedChunk = {
   score: number;
@@ -34,6 +65,10 @@ const inputText = ref("");
 const messages = ref<ChatMessage[]>([]);
 const sending = ref(false);
 const showThinking = ref(true);
+const queryRewriteEnabled = ref(false);
+const queryRewriteLoading = ref(false);
+const multiRoundSearchEnabled = ref(true);
+const multiRoundSearchLoading = ref(false);
 const chatContainerRef = ref<HTMLElement | null>(null);
 
 function now(): string {
@@ -172,6 +207,64 @@ function clearChat() {
   messages.value = [];
 }
 
+async function fetchQueryRewriteStatus() {
+  try {
+    const res = await getQueryRewriteEnabled();
+    if (res?.code === 200) {
+      queryRewriteEnabled.value = res.data ?? false;
+    }
+  } catch {
+    // ignore
+  }
+}
+
+async function handleQueryRewriteChange(val: boolean) {
+  queryRewriteLoading.value = true;
+  try {
+    const res = await setQueryRewriteEnabled(val);
+    if (res?.code === 200) {
+      message(val ? "查询改写已开启" : "查询改写已关闭", { type: "success" });
+    } else {
+      queryRewriteEnabled.value = !val;
+      message(res?.message ?? "设置失败", { type: "error" });
+    }
+  } catch (e: any) {
+    queryRewriteEnabled.value = !val;
+    message(e?.message ?? "设置失败", { type: "error" });
+  } finally {
+    queryRewriteLoading.value = false;
+  }
+}
+
+async function fetchMultiRoundSearchStatus() {
+  try {
+    const res = await getMultiRoundSearchEnabled();
+    if (res?.code === 200) {
+      multiRoundSearchEnabled.value = res.data ?? true;
+    }
+  } catch {
+    // ignore
+  }
+}
+
+async function handleMultiRoundSearchChange(val: boolean) {
+  multiRoundSearchLoading.value = true;
+  try {
+    const res = await setMultiRoundSearchEnabled(val);
+    if (res?.code === 200) {
+      message(val ? "多轮检索已开启" : "多轮检索已关闭", { type: "success" });
+    } else {
+      multiRoundSearchEnabled.value = !val;
+      message(res?.message ?? "设置失败", { type: "error" });
+    }
+  } catch (e: any) {
+    multiRoundSearchEnabled.value = !val;
+    message(e?.message ?? "设置失败", { type: "error" });
+  } finally {
+    multiRoundSearchLoading.value = false;
+  }
+}
+
 function getStepIcon(stage: string, status: string) {
   if (status === "start") return "ri:loader-4-line";
   if (stage === "rewrite") return "ri:edit-line";
@@ -187,6 +280,8 @@ function getStepColor(status: string) {
 
 onMounted(() => {
   scrollToBottom();
+  fetchQueryRewriteStatus();
+  fetchMultiRoundSearchStatus();
 });
 </script>
 
@@ -207,6 +302,24 @@ onMounted(() => {
       <div class="flex items-center mb-3">
         <el-switch v-model="showThinking" class="mr-2" />
         <span class="text-sm">显示执行流程</span>
+      </div>
+      <div class="flex items-center mb-3">
+        <el-switch
+          v-model="queryRewriteEnabled"
+          class="mr-2"
+          :loading="queryRewriteLoading"
+          @change="handleQueryRewriteChange"
+        />
+        <span class="text-sm">查询改写</span>
+      </div>
+      <div class="flex items-center mb-3">
+        <el-switch
+          v-model="multiRoundSearchEnabled"
+          class="mr-2"
+          :loading="multiRoundSearchLoading"
+          @change="handleMultiRoundSearchChange"
+        />
+        <span class="text-sm">多轮检索</span>
       </div>
       <div class="text-xs text-gray-400 mt-auto">
         RAG 智能问答，流式输出，实时展示执行流程。
@@ -361,14 +474,22 @@ onMounted(() => {
               </template>
 
               <!-- 消息内容 -->
-              <div class="whitespace-pre-wrap break-all min-h-5">
+              <div class="min-h-5">
                 <template
                   v-if="msg.role === 'assistant' && !msg.content && !msg.done"
                 >
                   <span class="text-gray-400 animate-pulse">思考中...</span>
                 </template>
+                <template v-else-if="msg.role === 'assistant'">
+                  <div
+                    class="markdown-body"
+                    v-html="renderMarkdown(msg.content)"
+                  />
+                </template>
                 <template v-else>
-                  {{ msg.content }}
+                  <div class="whitespace-pre-wrap break-all">
+                    {{ msg.content }}
+                  </div>
                 </template>
               </div>
 
@@ -425,5 +546,122 @@ onMounted(() => {
 
 :deep(.el-collapse-item__wrap) {
   border-bottom: none;
+}
+
+.markdown-body {
+  :deep(pre) {
+    padding: 12px;
+    margin: 8px 0;
+    overflow-x: auto;
+    background: #f6f8fa;
+    border-radius: 6px;
+  }
+
+  :deep(code) {
+    font-family: "Fira Code", Consolas, Monaco, monospace;
+    font-size: 13px;
+  }
+
+  :deep(:not(pre) > code) {
+    padding: 2px 6px;
+    background: rgb(175 184 193 / 20%);
+    border-radius: 4px;
+  }
+
+  :deep(p) {
+    margin: 0 0 8px;
+    line-height: 1.6;
+
+    &:last-child {
+      margin-bottom: 0;
+    }
+  }
+
+  :deep(h1),
+  :deep(h2),
+  :deep(h3),
+  :deep(h4),
+  :deep(h5),
+  :deep(h6) {
+    margin: 12px 0 8px;
+    font-weight: 600;
+    line-height: 1.4;
+
+    &:first-child {
+      margin-top: 0;
+    }
+  }
+
+  :deep(h1) {
+    font-size: 1.5em;
+  }
+
+  :deep(h2) {
+    font-size: 1.3em;
+  }
+
+  :deep(h3) {
+    font-size: 1.1em;
+  }
+
+  :deep(ul),
+  :deep(ol) {
+    padding-left: 20px;
+    margin: 4px 0;
+  }
+
+  :deep(li) {
+    margin: 2px 0;
+    line-height: 1.6;
+  }
+
+  :deep(table) {
+    width: 100%;
+    margin: 8px 0;
+    border-collapse: collapse;
+
+    th,
+    td {
+      padding: 6px 12px;
+      text-align: left;
+      border: 1px solid var(--el-border-color);
+    }
+
+    th {
+      font-weight: 600;
+      background: var(--el-fill-color-light);
+    }
+
+    tr:hover {
+      background: var(--el-fill-color-lighter);
+    }
+  }
+
+  :deep(blockquote) {
+    padding-left: 12px;
+    margin: 8px 0;
+    color: var(--el-text-color-secondary);
+    border-left: 4px solid var(--el-color-primary);
+  }
+
+  :deep(hr) {
+    margin: 12px 0;
+    border: none;
+    border-top: 1px solid var(--el-border-color);
+  }
+
+  :deep(img) {
+    max-width: 100%;
+    border-radius: 4px;
+  }
+
+  :deep(a) {
+    color: var(--el-color-primary);
+    text-decoration: none;
+
+    &:hover {
+      text-decoration: underline;
+    }
+  }
 }
 </style>

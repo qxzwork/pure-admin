@@ -78,6 +78,8 @@
     "js-cookie": "^3.0.7",
     "jsbarcode": "^3.12.3",
     "localforage": "^1.10.0",
+    "marked": "^18.0.4",
+    "marked-highlight": "^2.2.4",
     "mint-filter": "^4.0.3",
     "mitt": "^3.0.1",
     "mqtt": "4.3.7",
