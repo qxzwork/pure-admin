@@ -130,10 +130,20 @@ function sendMessage() {
       const decoder = new TextDecoder();
       let buffer = "";
       let eventType = "";
+      let dataLines: string[] = [];
+
+      function processEvent() {
+        if (eventType && dataLines.length) {
+          handleSSE(eventType, dataLines.join("\n"), assistantMsg);
+          eventType = "";
+          dataLines = [];
+        }
+      }
 
       function read() {
         reader.read().then(({ done, value }) => {
           if (done) {
+            processEvent();
             assistantMsg.done = true;
             sending.value = false;
             scrollToBottom();
@@ -146,11 +156,12 @@ function sendMessage() {
 
           for (const line of lines) {
             if (line.startsWith("event:")) {
+              processEvent();
               eventType = line.slice(6).trim();
-            } else if (line.startsWith("data:") && eventType) {
-              const data = line.slice(5).trim();
-              handleSSE(eventType, data, assistantMsg);
-              eventType = "";
+            } else if (line.startsWith("data:")) {
+              dataLines.push(line.slice(5));
+            } else if (line.trim() === "") {
+              processEvent();
             }
           }
           read();
@@ -278,6 +289,29 @@ function getStepColor(status: string) {
   return "text-(--el-color-success)";
 }
 
+function getStepLabel(stage: string) {
+  const labels: Record<string, string> = {
+    rewrite: "问题理解",
+    retrieve: "知识检索",
+    answer: "生成回答"
+  };
+  return labels[stage] || stage;
+}
+
+function getStepStatus(step: ThinkingStep): "pending" | "active" | "done" {
+  if (step.status === "done") return "done";
+  if (step.status === "start") return "active";
+  return "pending";
+}
+
+function getChunksPreview(chunks: RetrievedChunk[], limit = 3) {
+  return chunks.slice(0, limit);
+}
+
+function hasMoreChunks(chunks: RetrievedChunk[], limit = 3) {
+  return chunks.length > limit;
+}
+
 onMounted(() => {
   scrollToBottom();
   fetchQueryRewriteStatus();
@@ -286,11 +320,9 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="flex h-full">
+  <div class="rag-chat-container">
     <!-- 左侧 -->
-    <div
-      class="w-50 shrink-0 border-r border-(--el-border-color) p-3 flex flex-col"
-    >
+    <div class="rag-chat-sidebar">
       <el-button
         type="primary"
         class="w-full mb-3"
@@ -327,8 +359,8 @@ onMounted(() => {
     </div>
 
     <!-- 右侧：对话区 -->
-    <div class="flex-1 flex flex-col overflow-hidden">
-      <div ref="chatContainerRef" class="flex-1 overflow-auto p-4 space-y-4">
+    <div class="rag-chat-main">
+      <div ref="chatContainerRef" class="rag-chat-messages">
         <template v-if="messages.length">
           <div
             v-for="(msg, idx) in messages"
@@ -348,129 +380,151 @@ onMounted(() => {
             >
               <!-- 执行流程 -->
               <template v-if="showThinking && msg.steps.length">
-                <el-collapse class="mb-2">
-                  <el-collapse-item title="执行流程">
-                    <div class="space-y-1.5">
-                      <div
-                        v-for="(step, si) in msg.steps"
-                        :key="si"
-                        class="text-xs"
-                      >
-                        <template
-                          v-if="
-                            step.stage === 'rewrite' && step.status === 'done'
-                          "
-                        >
-                          <div class="flex items-center gap-1 mb-0.5">
-                            <span
-                              :class="getStepColor(step.status)"
-                              class="inline-flex items-center"
-                            >
-                              <component
-                                :is="
-                                  useRenderIcon(
-                                    getStepIcon(step.stage, step.status)
-                                  )
-                                "
-                                class="size-3.5 mr-0.5"
-                              />
-                            </span>
-                            <span class="font-semibold text-gray-600">
-                              问题理解
-                            </span>
-                            <el-tag
-                              v-if="step.queryRewritten"
-                              size="small"
-                              type="warning"
-                              class="ml-1"
-                            >
-                              已重写
-                            </el-tag>
-                            <el-tag
-                              v-else
-                              size="small"
-                              type="info"
-                              class="ml-1"
-                            >
-                              原始问题
-                            </el-tag>
-                          </div>
-                          <div
-                            v-if="step.queryRewritten"
-                            class="ml-5 text-gray-500"
+                <div class="thinking-process">
+                  <div class="thinking-header">
+                    <iconify-icon-offline
+                      icon="ri:flow-chart"
+                      class="size-4 text-gray-500"
+                    />
+                    <span>执行流程</span>
+                    <el-tag size="small" type="info" class="ml-auto">
+                      {{ msg.steps.filter(s => s.status === "done").length }}/{{
+                        msg.steps.length
+                      }}
+                    </el-tag>
+                  </div>
+                  <div class="thinking-timeline">
+                    <div
+                      v-for="(step, si) in msg.steps"
+                      :key="si"
+                      :class="[
+                        'timeline-item',
+                        `timeline-${getStepStatus(step)}`
+                      ]"
+                    >
+                      <div class="timeline-node">
+                        <div class="timeline-dot">
+                          <iconify-icon-offline
+                            v-if="getStepStatus(step) === 'active'"
+                            icon="ri:loader-4-line"
+                            class="size-3 animate-spin"
+                          />
+                          <iconify-icon-offline
+                            v-else-if="getStepStatus(step) === 'done'"
+                            icon="ri:check-line"
+                            class="size-3"
+                          />
+                          <div v-else class="size-2 rounded-full bg-gray-300" />
+                        </div>
+                        <div
+                          v-if="si < msg.steps.length - 1"
+                          class="timeline-line"
+                        />
+                      </div>
+                      <div class="timeline-content">
+                        <div class="timeline-header">
+                          <span class="timeline-title">
+                            {{ getStepLabel(step.stage) }}
+                          </span>
+                          <el-tag
+                            v-if="
+                              step.stage === 'rewrite' && step.status === 'done'
+                            "
+                            :type="step.queryRewritten ? 'warning' : 'info'"
+                            size="small"
+                            class="ml-2"
                           >
-                            <div>{{ step.original }}</div>
-                            <div class="text-(--el-color-warning)">
-                              → {{ step.rewritten }}
+                            {{ step.queryRewritten ? "已重写" : "原始问题" }}
+                          </el-tag>
+                          <el-tag
+                            v-if="
+                              step.stage === 'retrieve' &&
+                              step.status === 'done'
+                            "
+                            type="info"
+                            size="small"
+                            class="ml-2"
+                          >
+                            {{ step.count }} 条结果
+                          </el-tag>
+                        </div>
+
+                        <!-- 问题改写详情 -->
+                        <div
+                          v-if="
+                            step.stage === 'rewrite' &&
+                            step.status === 'done' &&
+                            step.queryRewritten
+                          "
+                          class="timeline-detail"
+                        >
+                          <div class="rewrite-box">
+                            <div class="rewrite-original">
+                              <span class="rewrite-label">原始</span>
+                              <span>{{ step.original }}</span>
+                            </div>
+                            <div class="rewrite-arrow">
+                              <iconify-icon-offline
+                                icon="ri:arrow-down-line"
+                                class="size-4 text-orange-400"
+                              />
+                            </div>
+                            <div class="rewrite-rewritten">
+                              <span class="rewrite-label">改写</span>
+                              <span>{{ step.rewritten }}</span>
                             </div>
                           </div>
-                        </template>
+                        </div>
 
-                        <template
+                        <!-- 检索结果预览 -->
+                        <div
                           v-if="
-                            step.stage === 'retrieve' && step.status === 'done'
+                            step.stage === 'retrieve' &&
+                            step.status === 'done' &&
+                            step.chunks?.length
                           "
+                          class="timeline-detail"
                         >
-                          <div class="flex items-center gap-1 mb-0.5">
-                            <span
-                              :class="getStepColor(step.status)"
-                              class="inline-flex items-center"
-                            >
-                              <component
-                                :is="
-                                  useRenderIcon(
-                                    getStepIcon(step.stage, step.status)
-                                  )
-                                "
-                                class="size-3.5 mr-0.5"
-                              />
-                            </span>
-                            <span class="font-semibold text-gray-600">
-                              知识检索
-                            </span>
-                            <el-tag size="small" type="info" class="ml-1">
-                              {{ step.count }} 条
-                            </el-tag>
-                          </div>
-                          <div
-                            v-if="step.chunks?.length"
-                            class="ml-5 space-y-1"
-                          >
+                          <div class="chunks-list">
                             <div
-                              v-for="(chunk, ci) in step.chunks"
+                              v-for="(chunk, ci) in getChunksPreview(
+                                step.chunks
+                              )"
                               :key="ci"
-                              class="bg-white/50 rounded p-1.5 border border-gray-200"
+                              class="chunk-item"
                             >
-                              <div class="flex items-center gap-1 mb-0.5">
-                                <el-tag size="small" type="info">
-                                  {{ (chunk.score * 100).toFixed(1) }}%
-                                </el-tag>
-                                <span class="text-gray-400 text-[11px]">
-                                  {{ chunk.source }}
-                                </span>
+                              <div class="chunk-score">
+                                {{ (chunk.score * 100).toFixed(0) }}%
                               </div>
-                              <div class="text-gray-600 line-clamp-3">
-                                {{ chunk.content }}
+                              <div class="chunk-info">
+                                <div class="chunk-source">
+                                  {{ chunk.source }}
+                                </div>
+                                <div class="chunk-content">
+                                  {{ chunk.content }}
+                                </div>
                               </div>
                             </div>
+                            <div
+                              v-if="hasMoreChunks(step.chunks)"
+                              class="chunks-more"
+                            >
+                              还有 {{ step.chunks.length - 3 }} 条相关结果...
+                            </div>
                           </div>
-                        </template>
+                        </div>
 
-                        <template v-if="step.status === 'start'">
-                          <div
-                            class="flex items-center gap-1 text-gray-400 animate-pulse"
-                          >
-                            <component
-                              :is="useRenderIcon('ri:loader-4-line')"
-                              class="size-3.5 animate-spin"
-                            />
-                            <span>{{ step.message || "处理中..." }}</span>
-                          </div>
-                        </template>
+                        <!-- 加载中状态 -->
+                        <div
+                          v-if="getStepStatus(step) === 'active'"
+                          class="timeline-loading"
+                        >
+                          {{ step.message || "处理中..." }}
+                        </div>
                       </div>
                     </div>
-                  </el-collapse-item>
-                </el-collapse>
+                  </div>
+                </div>
               </template>
 
               <!-- 消息内容 -->
@@ -509,7 +563,7 @@ onMounted(() => {
       </div>
 
       <!-- 输入区 -->
-      <div class="border-t border-(--el-border-color) p-3 flex items-end gap-2">
+      <div class="rag-chat-input">
         <el-input
           v-model="inputText"
           type="textarea"
@@ -534,18 +588,287 @@ onMounted(() => {
 </template>
 
 <style scoped>
-:deep(.el-collapse-item__header) {
-  height: 28px;
+/* 布局样式 */
+.rag-chat-container {
+  position: fixed;
+  inset: 82px 0 0 210px;
+  display: flex;
+  background: var(--el-bg-color);
+}
+
+.rag-chat-sidebar {
+  display: flex;
+  flex-shrink: 0;
+  flex-direction: column;
+  width: 200px;
+  padding: 12px;
+  background: var(--el-bg-color);
+  border-right: 1px solid var(--el-border-color);
+}
+
+.rag-chat-main {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.rag-chat-messages {
+  flex: 1;
+  padding: 16px;
+  overflow: auto;
+}
+
+.rag-chat-messages > :not(:first-child) {
+  margin-top: 16px;
+}
+
+.rag-chat-input {
+  display: flex;
+  flex-shrink: 0;
+  gap: 8px;
+  align-items: flex-end;
+  padding: 12px;
+  background: var(--el-bg-color);
+  border-top: 1px solid var(--el-border-color);
+}
+
+/* 执行流程时间线样式 */
+.thinking-process {
+  margin-bottom: 12px;
+  overflow: hidden;
+  background: var(--el-fill-color-lighter);
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 8px;
+}
+
+.thinking-header {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  padding: 8px 12px;
   font-size: 12px;
-  line-height: 28px;
+  font-weight: 500;
+  color: var(--el-text-color-regular);
+  background: var(--el-fill-color-light);
+  border-bottom: 1px solid var(--el-border-color-lighter);
 }
 
-:deep(.el-collapse-item__content) {
-  padding-bottom: 4px;
+.thinking-timeline {
+  padding: 12px 12px 4px;
 }
 
-:deep(.el-collapse-item__wrap) {
-  border-bottom: none;
+.timeline-item {
+  display: flex;
+  gap: 12px;
+  min-height: 40px;
+}
+
+.timeline-node {
+  display: flex;
+  flex-shrink: 0;
+  flex-direction: column;
+  align-items: center;
+  width: 20px;
+}
+
+.timeline-dot {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  transition: all 0.3s;
+}
+
+.timeline-line {
+  flex: 1;
+  width: 2px;
+  min-height: 16px;
+  margin: 4px 0;
+  background: var(--el-border-color);
+  transition: all 0.3s;
+}
+
+.timeline-content {
+  flex: 1;
+  min-width: 0;
+  padding-bottom: 12px;
+}
+
+.timeline-header {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.timeline-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--el-text-color-primary);
+}
+
+.timeline-detail {
+  margin-top: 8px;
+}
+
+.timeline-loading {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* 状态样式 */
+.timeline-pending .timeline-dot {
+  background: var(--el-fill-color);
+  border: 2px solid var(--el-border-color);
+}
+
+.timeline-pending .timeline-title {
+  color: var(--el-text-color-secondary);
+}
+
+.timeline-active .timeline-dot {
+  color: white;
+  background: var(--el-color-primary);
+  border: 2px solid var(--el-color-primary);
+}
+
+.timeline-active .timeline-line {
+  background: linear-gradient(
+    to bottom,
+    var(--el-color-primary),
+    var(--el-border-color)
+  );
+}
+
+.timeline-done .timeline-dot {
+  color: white;
+  background: var(--el-color-success);
+  border: 2px solid var(--el-color-success);
+}
+
+.timeline-done .timeline-line {
+  background: var(--el-color-success);
+}
+
+/* 问题改写样式 */
+.rewrite-box {
+  padding: 8px;
+  font-size: 12px;
+  background: var(--el-fill-color);
+  border-radius: 6px;
+}
+
+.rewrite-original,
+.rewrite-rewritten {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.rewrite-label {
+  flex-shrink: 0;
+  padding: 1px 6px;
+  font-size: 11px;
+  font-weight: 500;
+  border-radius: 4px;
+}
+
+.rewrite-original .rewrite-label {
+  color: var(--el-text-color-secondary);
+  background: var(--el-fill-color-dark);
+}
+
+.rewrite-original span:last-child {
+  color: var(--el-text-color-secondary);
+}
+
+.rewrite-arrow {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px 0;
+}
+
+.rewrite-rewritten .rewrite-label {
+  color: var(--el-color-warning);
+  background: var(--el-color-warning-light-9);
+}
+
+.rewrite-rewritten span:last-child {
+  font-weight: 500;
+  color: var(--el-color-warning);
+}
+
+/* 检索结果样式 */
+.chunks-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.chunk-item {
+  display: flex;
+  gap: 8px;
+  padding: 8px;
+  font-size: 12px;
+  background: var(--el-fill-color);
+  border-radius: 6px;
+}
+
+.chunk-score {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 24px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--el-color-primary);
+  background: var(--el-color-primary-light-9);
+  border-radius: 4px;
+}
+
+.chunk-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.chunk-source {
+  margin-bottom: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 11px;
+  color: var(--el-text-color-secondary);
+  white-space: nowrap;
+}
+
+.chunk-content {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-line-clamp: 2;
+  line-height: 1.5;
+  color: var(--el-text-color-regular);
+  -webkit-box-orient: vertical;
+}
+
+.chunks-more {
+  padding: 4px;
+  font-size: 11px;
+  color: var(--el-text-color-secondary);
+  text-align: center;
+}
+
+@keyframes pulse {
+  50% {
+    opacity: 0.5;
+  }
 }
 
 .markdown-body {
