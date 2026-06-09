@@ -3,6 +3,8 @@ import { ref, reactive, nextTick, onMounted } from "vue";
 import { useRenderIcon } from "@/components/ReIcon/src/hooks";
 import { getToken, formatToken } from "@/utils/auth";
 import { message } from "@/utils/message";
+import { ElMessageBox } from "element-plus";
+import { Delete } from "@element-plus/icons-vue";
 import { marked } from "marked";
 import { markedHighlight } from "marked-highlight";
 import hljs from "highlight.js";
@@ -10,7 +12,11 @@ import {
   getQueryRewriteEnabled,
   setQueryRewriteEnabled,
   getMultiRoundSearchEnabled,
-  setMultiRoundSearchEnabled
+  setMultiRoundSearchEnabled,
+  getRagSources,
+  getRagConversations,
+  getRagConversationMessages,
+  deleteRagConversation
 } from "@/api/rag";
 
 defineOptions({ name: "RagChat" });
@@ -69,6 +75,10 @@ const queryRewriteEnabled = ref(false);
 const queryRewriteLoading = ref(false);
 const multiRoundSearchEnabled = ref(true);
 const multiRoundSearchLoading = ref(false);
+const sourceFilter = ref("");
+const sourceOptions = ref<string[]>([]);
+const conversationId = ref("");
+const conversationList = ref<{ id: string; title: string }[]>([]);
 const chatContainerRef = ref<HTMLElement | null>(null);
 
 function now(): string {
@@ -111,7 +121,11 @@ function sendMessage() {
   sending.value = true;
   scrollToBottom();
 
-  const body = JSON.stringify({ query: text });
+  const body = JSON.stringify({
+    query: text,
+    conversationId: conversationId.value || undefined,
+    sourceFilter: sourceFilter.value || undefined
+  });
 
   const token = getToken()?.token;
   const headers: Record<string, string> = {
@@ -215,6 +229,7 @@ function handleKeydown(e: KeyboardEvent) {
 }
 
 function clearChat() {
+  conversationId.value = crypto.randomUUID();
   messages.value = [];
 }
 
@@ -276,6 +291,74 @@ async function handleMultiRoundSearchChange(val: boolean) {
   }
 }
 
+async function fetchSources() {
+  try {
+    const res = await getRagSources();
+    if (res?.code === 200) {
+      sourceOptions.value = res.data ?? [];
+    }
+  } catch {
+    // ignore
+  }
+}
+
+async function fetchConversations() {
+  try {
+    const res = await getRagConversations();
+    if (res?.code === 200) {
+      conversationList.value = res.data ?? [];
+    }
+  } catch {
+    // ignore
+  }
+}
+
+async function loadConversation(id: string) {
+  if (!id) {
+    messages.value = [];
+    return;
+  }
+  conversationId.value = id;
+  try {
+    const res = await getRagConversationMessages(id);
+    if (res?.code === 200) {
+      messages.value = (res.data ?? []).map(msg => ({
+        role: msg.role as "user" | "assistant",
+        content: msg.content,
+        steps: [],
+        done: true,
+        time: ""
+      }));
+      scrollToBottom();
+    }
+  } catch {
+    // ignore
+  }
+}
+
+async function handleDeleteConversation(id: string) {
+  try {
+    await ElMessageBox.confirm("确定删除该对话记录？", "警告", {
+      confirmButtonText: "确定",
+      cancelButtonText: "取消",
+      type: "warning"
+    });
+    const res = await deleteRagConversation(id);
+    if (res?.code === 200) {
+      message("删除成功", { type: "success" });
+      if (conversationId.value === id) {
+        conversationId.value = "";
+        messages.value = [];
+      }
+      fetchConversations();
+    } else {
+      message(res?.message ?? "删除失败", { type: "error" });
+    }
+  } catch {
+    // cancelled
+  }
+}
+
 function getStepIcon(stage: string, status: string) {
   if (status === "start") return "ri:loader-4-line";
   if (stage === "rewrite") return "ri:edit-line";
@@ -316,6 +399,8 @@ onMounted(() => {
   scrollToBottom();
   fetchQueryRewriteStatus();
   fetchMultiRoundSearchStatus();
+  fetchSources();
+  fetchConversations();
 });
 </script>
 
@@ -331,6 +416,36 @@ onMounted(() => {
       >
         新对话
       </el-button>
+      <div class="flex flex-col mb-3">
+        <span class="text-sm mb-1">历史对话</span>
+        <el-select
+          v-model="conversationId"
+          placeholder="选择对话"
+          clearable
+          filterable
+          size="small"
+          @change="loadConversation"
+        >
+          <el-option
+            v-for="item in conversationList"
+            :key="item.id"
+            :label="item.title"
+            :value="item.id"
+          >
+            <div class="flex-bc w-full">
+              <span class="truncate">{{ item.title }}</span>
+              <el-button
+                type="danger"
+                link
+                size="small"
+                @click.stop="handleDeleteConversation(item.id)"
+              >
+                <el-icon><Delete /></el-icon>
+              </el-button>
+            </div>
+          </el-option>
+        </el-select>
+      </div>
       <div class="flex items-center mb-3">
         <el-switch v-model="showThinking" class="mr-2" />
         <span class="text-sm">显示执行流程</span>
@@ -352,6 +467,23 @@ onMounted(() => {
           @change="handleMultiRoundSearchChange"
         />
         <span class="text-sm">多轮检索</span>
+      </div>
+      <div class="flex flex-col mb-3">
+        <span class="text-sm mb-1">来源筛选</span>
+        <el-select
+          v-model="sourceFilter"
+          placeholder="全部来源"
+          clearable
+          filterable
+          size="small"
+        >
+          <el-option
+            v-for="item in sourceOptions"
+            :key="item"
+            :label="item"
+            :value="item"
+          />
+        </el-select>
       </div>
       <div class="text-xs text-gray-400 mt-auto">
         RAG 智能问答，流式输出，实时展示执行流程。

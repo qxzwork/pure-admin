@@ -206,3 +206,29 @@ export const setMultiRoundSearchEnabled = (enabled: boolean) => {
 export const getRagSources = () => {
   return http.request<SimpleResult<string[]>>("get", "/api/rag/sources");
 };
+
+// ========== 对话管理 ==========
+
+/** 获取对话列表 */
+export const getRagConversations = () => {
+  return http.request<SimpleResult<{ id: string; title: string }[]>>(
+    "get",
+    "/api/rag/conversations"
+  );
+};
+
+/** 获取对话历史消息 */
+export const getRagConversationMessages = (conversationId: string) => {
+  return http.request<SimpleResult<{ role: string; content: string }[]>>(
+    "get",
+    `/api/rag/conversations/${conversationId}/messages`
+  );
+};
+
+/** 删除对话 */
+export const deleteRagConversation = (conversationId: string) => {
+  return http.request<SimpleResult<null>>(
+    "delete",
+    `/api/rag/conversations/${conversationId}`
+  );
+};
