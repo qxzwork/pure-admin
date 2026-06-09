@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, nextTick, onMounted } from "vue";
+import { ref, reactive, nextTick, onMounted } from "vue";
 import { useRenderIcon } from "@/components/ReIcon/src/hooks";
 import { getToken, formatToken } from "@/utils/auth";
 
@@ -49,13 +49,13 @@ function sendMessage() {
     time: now()
   });
 
-  const assistantMsg: ChatMessage = {
+  const assistantMsg = reactive<ChatMessage>({
     role: "assistant",
     content: "",
     reasoning: "",
     done: false,
     time: now()
-  };
+  });
   messages.value.push(assistantMsg);
   sending.value = true;
   scrollToBottom();
