@@ -5,6 +5,7 @@ import { useRenderIcon } from "@/components/ReIcon/src/hooks";
 import { message } from "@/utils/message";
 import { ElMessageBox } from "element-plus";
 import { http } from "@/utils/http";
+import { getRagSources } from "@/api/rag";
 import dayjs from "dayjs";
 
 defineOptions({ name: "RagDocument" });
@@ -19,6 +20,7 @@ const loading = ref(false);
 const dataList = ref<KnowledgeChunk[]>([]);
 const pagination = reactive({ total: 0, pageSize: 20, currentPage: 1 });
 const sourceFilter = ref("");
+const sourceOptions = ref<string[]>([]);
 
 const columns: TableColumnList = [
   { label: "ID", prop: "id", width: 100, showOverflowTooltip: true },
@@ -52,6 +54,17 @@ async function onSearch() {
     dataList.value = [];
   } finally {
     loading.value = false;
+  }
+}
+
+async function fetchSources() {
+  try {
+    const res = await getRagSources();
+    if (res?.code === 200) {
+      sourceOptions.value = res.data ?? [];
+    }
+  } catch {
+    // ignore
   }
 }
 
@@ -149,6 +162,7 @@ async function handleIngest() {
 
 onMounted(() => {
   onSearch();
+  fetchSources();
 });
 </script>
 
@@ -156,13 +170,21 @@ onMounted(() => {
   <div class="p-4">
     <PureTableBar title="文档列表" :columns="columns" @refresh="onSearch">
       <template #buttons>
-        <el-input
+        <el-select
           v-model="sourceFilter"
           placeholder="按来源筛选"
           clearable
+          filterable
           class="w-45! mr-2"
           @change="onSearch"
-        />
+        >
+          <el-option
+            v-for="item in sourceOptions"
+            :key="item"
+            :label="item"
+            :value="item"
+          />
+        </el-select>
         <el-button
           type="primary"
           :icon="useRenderIcon('ri/add-circle-line')"

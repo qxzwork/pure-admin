@@ -199,3 +199,10 @@ export const setMultiRoundSearchEnabled = (enabled: boolean) => {
     { params: { enabled } }
   );
 };
+
+// ========== 来源列表 ==========
+
+/** 获取所有来源列表 */
+export const getRagSources = () => {
+  return http.request<SimpleResult<string[]>>("get", "/api/rag/sources");
+};
