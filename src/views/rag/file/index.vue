@@ -34,11 +34,11 @@ const dataList = ref<RagFileItem[]>([]);
 const pagination = reactive({ total: 0, pageSize: 20, currentPage: 1 });
 const searchForm = reactive({
   fileName: "",
-  status: undefined as RagDocStatusCode | undefined
+  status: "" as string | RagDocStatusCode
 });
 
 const statusOptions = [
-  { label: "全部", value: undefined },
+  { label: "全部", value: "" },
   { label: "解析中", value: RAG_DOC_STATUS.PROCESSING },
   { label: "成功", value: RAG_DOC_STATUS.SUCCESS },
   { label: "失败", value: RAG_DOC_STATUS.FAILED }
@@ -107,7 +107,7 @@ async function onSearch() {
       page: pagination.currentPage,
       size: pagination.pageSize,
       fileName: searchForm.fileName || undefined,
-      status: searchForm.status
+      status: (searchForm.status || undefined) as RagDocStatusCode | undefined
     });
     if (res?.code === 200) {
       dataList.value = res.data?.records ?? [];
@@ -138,7 +138,7 @@ function handleCurrentChange(val: number) {
 
 function resetSearch() {
   searchForm.fileName = "";
-  searchForm.status = undefined;
+  searchForm.status = "";
   pagination.currentPage = 1;
   onSearch();
 }

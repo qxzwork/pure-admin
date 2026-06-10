@@ -40,6 +40,17 @@ import RiInformationLine from "~icons/ri/information-line?raw";
 import RiTerminalWindowLine from "~icons/ri/terminal-window-line?raw";
 import RiCheckboxCircleLine from "~icons/ri/checkbox-circle-line?raw";
 import RiBarChartHorizontalLine from "~icons/ri/bar-chart-horizontal-line?raw";
+import RiLoader4Line from "~icons/ri/loader-4-line?raw";
+import RiFileCopyLine from "~icons/ri/file-copy-line?raw";
+import RiArrowRightSLine from "~icons/ri/arrow-right-s-line?raw";
+import RiEyeLine from "~icons/ri/eye-line?raw";
+import RiRestartLine from "~icons/ri/restart-line?raw";
+import RiDeleteBinLine from "~icons/ri/delete-bin-line?raw";
+import RiRefreshLine from "~icons/ri/refresh-line?raw";
+import RiKeyLine from "~icons/ri/key-line?raw";
+import RiCheckLine from "~icons/ri/check-line?raw";
+import RiCloseLine from "~icons/ri/close-line?raw";
+import RiDownloadLine from "~icons/ri/download-line?raw";
 
 const icons = [
   // Element Plus Icon: https://github.com/element-plus/element-plus-icons
@@ -78,7 +89,18 @@ const icons = [
   ["ri/information-line", RiInformationLine],
   ["ri/terminal-window-line", RiTerminalWindowLine],
   ["ri/checkbox-circle-line", RiCheckboxCircleLine],
-  ["ri/bar-chart-horizontal-line", RiBarChartHorizontalLine]
+  ["ri/bar-chart-horizontal-line", RiBarChartHorizontalLine],
+  ["ri/loader-4-line", RiLoader4Line],
+  ["ri/file-copy-line", RiFileCopyLine],
+  ["ri/arrow-right-s-line", RiArrowRightSLine],
+  ["ri/eye-line", RiEyeLine],
+  ["ri/restart-line", RiRestartLine],
+  ["ri/delete-bin-line", RiDeleteBinLine],
+  ["ri/refresh-line", RiRefreshLine],
+  ["ri/key-line", RiKeyLine],
+  ["ri/check-line", RiCheckLine],
+  ["ri/close-line", RiCloseLine],
+  ["ri/download-line", RiDownloadLine]
 ];
 
 // 本地菜单图标，后端在路由的 icon 中返回对应的图标字符串并且前端在此处使用 addIcon 添加即可渲染菜单图标
