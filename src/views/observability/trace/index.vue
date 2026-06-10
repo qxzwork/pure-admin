@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { useTrace } from "./hook";
-import { PureTableBar } from "@/components/RePureTableBar";
 import { useRenderIcon } from "@/components/ReIcon/src/hooks";
 
 defineOptions({ name: "ObservabilityTrace" });
@@ -8,9 +7,10 @@ defineOptions({ name: "ObservabilityTrace" });
 const {
   loading,
   columns,
-  dataList,
+  sessionList,
   pagination,
   statusFilter,
+  expandedRows,
   stats,
   statsLoading,
   detailVisible,
@@ -19,17 +19,20 @@ const {
   detailLoading,
   onSearch,
   loadStats,
-  handleDetail,
+  toggleExpand,
+  handleTraceDetail,
   handleSizeChange,
   handleCurrentChange,
   fmt,
   fmtTime,
-  spanTag
+  spanTag,
+  truncateText
 } = useTrace();
 </script>
 
 <template>
   <div class="p-4">
+    <!-- 统计卡片 -->
     <el-row :gutter="16" class="mb-4">
       <el-col :span="6">
         <el-card v-loading="statsLoading" shadow="hover">
@@ -78,80 +81,163 @@ const {
       </el-col>
     </el-row>
 
-    <PureTableBar title="Trace 列表" :columns="columns" @refresh="onSearch">
-      <template #buttons>
-        <el-select
-          v-model="statusFilter"
-          placeholder="全部状态"
-          clearable
-          class="w-32! mr-2"
-          @change="onSearch"
-        >
-          <el-option label="SUCCESS" value="SUCCESS" />
-          <el-option label="ERROR" value="ERROR" />
-        </el-select>
-        <el-button
-          type="primary"
-          :icon="useRenderIcon('ri/refresh-line')"
-          @click="loadStats"
-        >
-          刷新统计
-        </el-button>
-      </template>
-      <template v-slot="{ size, dynamicColumns }">
-        <pure-table
-          row-key="id"
-          adaptive
-          :adaptiveConfig="{ offsetBottom: 108 }"
-          align-whole="center"
-          table-layout="auto"
-          :loading="loading"
-          :size="size"
-          :data="dataList"
-          :columns="dynamicColumns"
-          :pagination="{ ...pagination, size }"
-          :header-cell-style="{
-            background: 'var(--el-fill-color-light)',
-            color: 'var(--el-text-color-primary)'
-          }"
-          @page-size-change="handleSizeChange"
-          @page-current-change="handleCurrentChange"
-        >
-          <template #status="{ row }">
-            <el-tag
-              :type="row.status === 'SUCCESS' ? 'success' : 'danger'"
-              size="small"
-            >
-              {{ row.status }}
-            </el-tag>
-          </template>
-          <template #operation="{ row }">
-            <el-button
-              link
-              type="primary"
-              :size="size"
-              :icon="useRenderIcon('ri/search-line')"
-              @click="handleDetail(row)"
-            >
-              详情
-            </el-button>
-          </template>
-        </pure-table>
-      </template>
-    </PureTableBar>
+    <!-- 会话分组列表 -->
+    <el-card shadow="never" class="mt-4">
+      <div class="flex-bc mb-4">
+        <h3 class="text-lg font-semibold">会话列表</h3>
+        <div class="flex items-center">
+          <el-select
+            v-model="statusFilter"
+            placeholder="全部状态"
+            clearable
+            class="w-32! mr-2"
+            @change="onSearch"
+          >
+            <el-option label="SUCCESS" value="SUCCESS" />
+            <el-option label="ERROR" value="ERROR" />
+          </el-select>
+          <el-button
+            type="primary"
+            :icon="useRenderIcon('ri/refresh-line')"
+            @click="loadStats"
+          >
+            刷新统计
+          </el-button>
+        </div>
+      </div>
+      <pure-table
+        row-key="sessionId"
+        :expand-row-keys="expandedRows"
+        adaptive
+        :adaptiveConfig="{ offsetBottom: 108 }"
+        align-whole="center"
+        table-layout="auto"
+        :loading="loading"
+        :data="sessionList"
+        :columns="columns"
+        :pagination="pagination"
+        :header-cell-style="{
+          background: 'var(--el-fill-color-light)',
+          color: 'var(--el-text-color-primary)'
+        }"
+        @page-size-change="handleSizeChange"
+        @page-current-change="handleCurrentChange"
+      >
+        <!-- 展开列 -->
+        <template #expand="{ row }">
+          <div class="p-3 bg-gray-50 dark:bg-gray-800">
+            <h4 class="mb-2 text-sm font-semibold">
+              会话 {{ row.sessionId }} 的 Trace 记录
+            </h4>
+            <el-table :data="row.traces" border size="small" max-height="400">
+              <el-table-column
+                prop="id"
+                label="Trace ID"
+                min-width="150"
+                show-overflow-tooltip
+              />
+              <el-table-column
+                prop="userQuery"
+                label="用户提问"
+                min-width="200"
+                show-overflow-tooltip
+              />
+              <el-table-column prop="modelName" label="模型" width="100" />
+              <el-table-column prop="status" label="状态" width="80">
+                <template #default="{ row: trace }">
+                  <el-tag
+                    :type="trace.status === 'SUCCESS' ? 'success' : 'danger'"
+                    size="small"
+                  >
+                    {{ trace.status }}
+                  </el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column prop="totalDuration" label="耗时" width="100">
+                <template #default="{ row: trace }">
+                  {{ fmt(trace.totalDuration) }}
+                </template>
+              </el-table-column>
+              <el-table-column
+                prop="toolCallCount"
+                label="工具调用"
+                width="90"
+              />
+              <el-table-column prop="totalTokens" label="Token" width="90" />
+              <el-table-column prop="createTime" label="创建时间" width="170">
+                <template #default="{ row: trace }">
+                  {{ fmtTime(trace.createTime) }}
+                </template>
+              </el-table-column>
+              <el-table-column label="操作" width="80" fixed="right">
+                <template #default="{ row: trace }">
+                  <el-button
+                    link
+                    type="primary"
+                    size="small"
+                    :icon="useRenderIcon('ri/search-line')"
+                    @click="handleTraceDetail(trace)"
+                  >
+                    详情
+                  </el-button>
+                </template>
+              </el-table-column>
+            </el-table>
+          </div>
+        </template>
 
+        <!-- 会话级别：成功/失败 -->
+        <template #successCount="{ row }">
+          <span class="text-(--el-color-success)">{{ row.successCount }}</span>
+          <span class="mx-1">/</span>
+          <span class="text-(--el-color-danger)">{{ row.errorCount }}</span>
+        </template>
+
+        <!-- 会话级别：时间格式化 -->
+        <template #firstQueryTime="{ row }">
+          {{ fmtTime(row.firstQueryTime) }}
+        </template>
+        <template #lastQueryTime="{ row }">
+          {{ fmtTime(row.lastQueryTime) }}
+        </template>
+
+        <!-- 会话级别：操作列（展开 Trace 列表） -->
+        <template #operation="{ row }">
+          <el-button
+            link
+            type="primary"
+            :icon="
+              useRenderIcon(
+                expandedRows.includes(row.sessionId)
+                  ? 'ri/arrow-up-s-line'
+                  : 'ri/arrow-down-s-line'
+              )
+            "
+            @click="toggleExpand(row)"
+          >
+            {{ row.traceCount }} 条 Trace
+          </el-button>
+        </template>
+      </pure-table>
+    </el-card>
+
+    <!-- Trace 详情弹窗 -->
     <el-dialog
       v-model="detailVisible"
       title="Trace 详情"
-      width="900px"
+      width="95%"
       destroy-on-close
     >
       <div v-loading="detailLoading">
         <template v-if="detailTrace">
+          <!-- Trace 基本信息 -->
           <el-descriptions :column="2" border class="mb-4">
-            <el-descriptions-item label="Trace ID">{{
-              detailTrace.id
-            }}</el-descriptions-item>
+            <el-descriptions-item label="Trace ID">
+              {{ detailTrace.id }}
+            </el-descriptions-item>
+            <el-descriptions-item label="会话 ID">
+              {{ detailTrace.sessionId }}
+            </el-descriptions-item>
             <el-descriptions-item label="状态">
               <el-tag
                 :type="detailTrace.status === 'SUCCESS' ? 'success' : 'danger'"
@@ -160,19 +246,22 @@ const {
                 {{ detailTrace.status }}
               </el-tag>
             </el-descriptions-item>
-            <el-descriptions-item label="模型">{{
-              detailTrace.modelName
-            }}</el-descriptions-item>
-            <el-descriptions-item label="耗时">{{
-              fmt(detailTrace.totalDuration)
-            }}</el-descriptions-item>
-            <el-descriptions-item label="工具调用"
-              >{{ detailTrace.toolCallCount ?? 0 }} 次</el-descriptions-item
-            >
-            <el-descriptions-item label="Token">
-              {{ detailTrace.inputTokens ?? 0 }} /
+            <el-descriptions-item label="模型">
+              {{ detailTrace.modelName }}
+            </el-descriptions-item>
+            <el-descriptions-item label="耗时">
+              {{ fmt(detailTrace.totalDuration) }}
+            </el-descriptions-item>
+            <el-descriptions-item label="工具调用">
+              {{ detailTrace.toolCallCount ?? 0 }} 次
+            </el-descriptions-item>
+            <el-descriptions-item label="Token 统计">
+              输入 {{ detailTrace.inputTokens ?? 0 }} / 输出
               {{ detailTrace.outputTokens ?? 0 }} (共
               {{ detailTrace.totalTokens ?? 0 }})
+            </el-descriptions-item>
+            <el-descriptions-item label="创建时间">
+              {{ fmtTime(detailTrace.createTime) }}
             </el-descriptions-item>
             <el-descriptions-item label="用户提问" :span="2">
               <div class="whitespace-pre-wrap break-all">
@@ -195,20 +284,15 @@ const {
                 {{ detailTrace.errorMessage }}
               </div>
             </el-descriptions-item>
-            <el-descriptions-item label="创建时间">{{
-              fmtTime(detailTrace.createTime)
-            }}</el-descriptions-item>
-            <el-descriptions-item label="更新时间">{{
-              fmtTime(detailTrace.updateTime)
-            }}</el-descriptions-item>
           </el-descriptions>
 
-          <h4 class="mb-2">Span 调用链路</h4>
-          <el-table :data="detailSpans" border size="small" max-height="400">
+          <!-- Span 调用链路 -->
+          <h4 class="mb-2 font-semibold">Span 调用链路</h4>
+          <el-table :data="detailSpans" border size="small" max-height="500">
             <el-table-column
               prop="spanName"
               label="名称"
-              min-width="150"
+              min-width="120"
               show-overflow-tooltip
             />
             <el-table-column prop="spanType" label="类型" width="90">
@@ -228,23 +312,67 @@ const {
                 </el-tag>
               </template>
             </el-table-column>
-            <el-table-column prop="duration" label="耗时" width="100">
+            <el-table-column prop="duration" label="耗时" width="90">
               <template #default="{ row }">{{ fmt(row.duration) }}</template>
             </el-table-column>
             <el-table-column
               prop="toolName"
-              label="工具"
+              label="工具名称"
               width="120"
               show-overflow-tooltip
             />
             <el-table-column
-              prop="thought"
-              label="思考/输出"
+              prop="toolInput"
+              label="工具输入"
               min-width="200"
               show-overflow-tooltip
             >
               <template #default="{ row }">
-                {{ row.thought || row.toolOutput || "-" }}
+                <el-tooltip
+                  v-if="row.toolInput"
+                  :content="row.toolInput"
+                  placement="top"
+                  :show-after="300"
+                >
+                  <span>{{ truncateText(row.toolInput, 80) }}</span>
+                </el-tooltip>
+                <span v-else>-</span>
+              </template>
+            </el-table-column>
+            <el-table-column
+              prop="toolOutput"
+              label="工具输出"
+              min-width="200"
+              show-overflow-tooltip
+            >
+              <template #default="{ row }">
+                <el-tooltip
+                  v-if="row.toolOutput"
+                  :content="row.toolOutput"
+                  placement="top"
+                  :show-after="300"
+                >
+                  <span>{{ truncateText(row.toolOutput, 80) }}</span>
+                </el-tooltip>
+                <span v-else>-</span>
+              </template>
+            </el-table-column>
+            <el-table-column
+              prop="thought"
+              label="思考过程"
+              min-width="200"
+              show-overflow-tooltip
+            >
+              <template #default="{ row }">
+                <el-tooltip
+                  v-if="row.thought"
+                  :content="row.thought"
+                  placement="top"
+                  :show-after="300"
+                >
+                  <span>{{ truncateText(row.thought, 80) }}</span>
+                </el-tooltip>
+                <span v-else>-</span>
               </template>
             </el-table-column>
             <el-table-column
