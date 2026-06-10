@@ -61,6 +61,42 @@ type TracePageResult = {
   size: number;
 };
 
+/** 会话分组响应 */
+export type SessionGroupResponse = {
+  sessionId: string;
+  traceCount: number;
+  firstQueryTime: string;
+  lastQueryTime: string;
+  totalTokens: number;
+  successCount: number;
+  errorCount: number;
+  traces: AgentTrace[];
+};
+
+/** 会话分页响应 */
+type SessionGroupPageResponse = {
+  content: SessionGroupResponse[];
+  total: number;
+  pages: number;
+  current: number;
+  size: number;
+};
+
+/** 按 sessionId 分页查询会话分组 */
+export const getSessions = (params?: {
+  page?: number;
+  size?: number;
+  startTime?: string;
+  endTime?: string;
+  status?: string;
+}) => {
+  return http.request<SessionGroupPageResponse>(
+    "get",
+    "/api/observability/sessions",
+    { params }
+  );
+};
+
 /** 分页查询 Trace 列表 */
 export const getTraceList = (params: {
   page?: number;
