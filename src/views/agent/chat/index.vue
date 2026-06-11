@@ -2,16 +2,32 @@
 import { ref, reactive, nextTick, onMounted } from "vue";
 import { useRenderIcon } from "@/components/ReIcon/src/hooks";
 import { getToken, formatToken } from "@/utils/auth";
+import { message } from "@/utils/message";
 
 defineOptions({ name: "AgentChat" });
 
+// ==================== 类型定义 ====================
+
+type ApprovalTool = {
+  toolCallId: string;
+  toolName: string;
+  description: string;
+  arguments: string;
+};
+
 type ChatMessage = {
-  role: "user" | "assistant";
+  role: "user" | "assistant" | "approval";
   content: string;
   reasoning: string;
   done: boolean;
   time: string;
+  // 审批专用字段
+  threadId?: string;
+  tools?: ApprovalTool[];
+  approvalStatus?: "pending" | "approved" | "rejected";
 };
+
+// ==================== 状态 ====================
 
 const inputText = ref("");
 const messages = ref<ChatMessage[]>([]);
@@ -19,6 +35,8 @@ const sending = ref(false);
 const showThinking = ref(true);
 const chatContainerRef = ref<HTMLElement | null>(null);
 const conversationId = ref<string>(crypto.randomUUID());
+
+// ==================== 工具函数 ====================
 
 function now(): string {
   return new Date().toLocaleTimeString("zh-CN", {
@@ -35,6 +53,32 @@ function scrollToBottom() {
     }
   });
 }
+
+/** 构建带鉴权的请求 headers */
+function getAuthHeaders(): Record<string, string> {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json"
+  };
+  const token = getToken()?.token;
+  if (token) headers["Authorization"] = formatToken(token);
+  return headers;
+}
+
+/** 通用 fetch POST JSON（非 SSE） */
+async function postJSON<T>(url: string, body: unknown): Promise<T> {
+  const resp = await fetch(url, {
+    method: "POST",
+    headers: getAuthHeaders(),
+    body: JSON.stringify(body)
+  });
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw new Error(`HTTP ${resp.status}: ${text}`);
+  }
+  return resp.json();
+}
+
+// ==================== SSE 对话 ====================
 
 function sendMessage() {
   const text = inputText.value.trim();
@@ -62,15 +106,9 @@ function sendMessage() {
 
   const body = { message: text, conversationId: conversationId.value };
 
-  const token = getToken()?.token;
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json"
-  };
-  if (token) headers["Authorization"] = formatToken(token);
-
-  fetch("/api/agent/chat/stream", {
+  fetch("/api/agent/chat/hitl", {
     method: "POST",
-    headers,
+    headers: getAuthHeaders(),
     body: JSON.stringify(body)
   })
     .then(response => {
@@ -85,7 +123,13 @@ function sendMessage() {
       function read() {
         reader.read().then(({ done, value }) => {
           if (done) {
-            assistantMsg.done = true;
+            // 如果 assistantMsg 还没有内容（可能整个响应就是中断），移除空消息
+            if (!assistantMsg.content && !assistantMsg.reasoning) {
+              const idx = messages.value.indexOf(assistantMsg);
+              if (idx !== -1) messages.value.splice(idx, 1);
+            } else {
+              assistantMsg.done = true;
+            }
             sending.value = false;
             scrollToBottom();
             return;
@@ -103,6 +147,29 @@ function sendMessage() {
 
             try {
               const json = JSON.parse(dataStr);
+
+              // 检测中断事件
+              if (json.type === "INTERRUPTION") {
+                // 移除空的 assistant 消息
+                const idx = messages.value.indexOf(assistantMsg);
+                if (idx !== -1) messages.value.splice(idx, 1);
+
+                // 插入审批卡片
+                messages.value.push({
+                  role: "approval",
+                  content: json.message || "以下操作需要您的确认",
+                  reasoning: "",
+                  done: true,
+                  time: now(),
+                  threadId: json.threadId,
+                  tools: json.tools || [],
+                  approvalStatus: "pending"
+                });
+                sending.value = false;
+                scrollToBottom();
+                return;
+              }
+
               if (json.finished) {
                 assistantMsg.done = true;
                 sending.value = false;
@@ -136,6 +203,124 @@ function sendMessage() {
       scrollToBottom();
     });
 }
+
+// ==================== 审批操作 ====================
+
+/** 找到最近一个 pending 状态的审批消息 */
+function findPendingApproval(): ChatMessage | undefined {
+  for (let i = messages.value.length - 1; i >= 0; i--) {
+    const msg = messages.value[i];
+    if (msg.role === "approval" && msg.approvalStatus === "pending") {
+      return msg;
+    }
+  }
+  return undefined;
+}
+
+/** 处理审批响应（可能包含链式中断） */
+function handleApprovalResponse(threadId: string, resp: any) {
+  if (resp.code !== 200) {
+    message(resp.message || "审批失败", { type: "error" });
+    return;
+  }
+
+  const data = resp.data;
+
+  // 检查响应中是否包含新的中断（链式审批）
+  // 后端在链式中断时会返回特定的提示文本
+  if (data.content && data.content.includes("需要审批")) {
+    // 刷新待审批列表
+    fetchPendingApproval(threadId);
+    return;
+  }
+
+  // 正常响应，追加 assistant 消息
+  if (data.content) {
+    messages.value.push({
+      role: "assistant",
+      content: data.content,
+      reasoning: "",
+      done: true,
+      time: now()
+    });
+  }
+  scrollToBottom();
+}
+
+/** 从后端获取指定 thread 的待审批信息（用于链式审批） */
+async function fetchPendingApproval(threadId: string) {
+  try {
+    const resp = await fetch("/api/agent/pending-approvals", {
+      headers: getAuthHeaders()
+    });
+    const result = await resp.json();
+    if (result.code === 200 && result.data) {
+      const pending = result.data.find((p: any) => p.threadId === threadId);
+      if (pending) {
+        messages.value.push({
+          role: "approval",
+          content: pending.message || "又有新的操作需要您的确认",
+          reasoning: "",
+          done: true,
+          time: now(),
+          threadId: pending.threadId,
+          tools: pending.tools || [],
+          approvalStatus: "pending"
+        });
+        scrollToBottom();
+      }
+    }
+  } catch (e) {
+    console.error("[HITL] 获取待审批信息失败:", e);
+  }
+}
+
+/** 批准所有工具调用 */
+async function approveAll(msg: ChatMessage) {
+  if (!msg.threadId) return;
+  msg.approvalStatus = "approved";
+  sending.value = true;
+  scrollToBottom();
+
+  try {
+    const resp = await postJSON<any>("/api/agent/approval", {
+      threadId: msg.threadId,
+      decision: "APPROVE"
+    });
+    handleApprovalResponse(msg.threadId, resp);
+  } catch (e) {
+    message("审批请求失败", { type: "error" });
+    msg.approvalStatus = "pending"; // 回滚状态
+  } finally {
+    sending.value = false;
+    scrollToBottom();
+  }
+}
+
+/** 拒绝所有工具调用 */
+async function rejectAll(msg: ChatMessage) {
+  if (!msg.threadId) return;
+  msg.approvalStatus = "rejected";
+  sending.value = true;
+  scrollToBottom();
+
+  try {
+    const resp = await postJSON<any>("/api/agent/approval", {
+      threadId: msg.threadId,
+      decision: "REJECT",
+      reason: "用户拒绝执行此操作"
+    });
+    handleApprovalResponse(msg.threadId, resp);
+  } catch (e) {
+    message("审批请求失败", { type: "error" });
+    msg.approvalStatus = "pending";
+  } finally {
+    sending.value = false;
+    scrollToBottom();
+  }
+}
+
+// ==================== 其他交互 ====================
 
 function handleKeydown(e: KeyboardEvent) {
   if (e.key === "Enter" && !e.shiftKey) {
@@ -173,7 +358,7 @@ onMounted(() => {
         <span class="text-sm">显示思考过程</span>
       </div>
       <div class="text-xs text-gray-400 mt-auto">
-        Agent 智能对话，支持工具调用，流式输出。
+        Agent 智能对话，支持工具调用与人工审批。
       </div>
     </div>
 
@@ -189,7 +374,101 @@ onMounted(() => {
               msg.role === 'user' ? 'justify-end' : 'justify-start'
             ]"
           >
+            <!-- ==================== 审批卡片 ==================== -->
             <div
+              v-if="msg.role === 'approval'"
+              class="max-w-[80%] w-full rounded-2xl border px-4 py-3 shadow-sm"
+              :class="{
+                'border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-700':
+                  msg.approvalStatus === 'pending',
+                'border-green-300 bg-green-50 dark:bg-green-950/30 dark:border-green-700':
+                  msg.approvalStatus === 'approved',
+                'border-red-300 bg-red-50 dark:bg-red-950/30 dark:border-red-700':
+                  msg.approvalStatus === 'rejected'
+              }"
+            >
+              <!-- 标题 -->
+              <div class="flex items-center gap-2 mb-2">
+                <span class="text-base">🔒</span>
+                <span
+                  class="font-medium text-sm"
+                  :class="{
+                    'text-amber-700 dark:text-amber-400':
+                      msg.approvalStatus === 'pending',
+                    'text-green-700 dark:text-green-400':
+                      msg.approvalStatus === 'approved',
+                    'text-red-700 dark:text-red-400':
+                      msg.approvalStatus === 'rejected'
+                  }"
+                >
+                  <template v-if="msg.approvalStatus === 'pending'"
+                    >需要您的确认</template
+                  >
+                  <template v-else-if="msg.approvalStatus === 'approved'"
+                    >✅ 已批准</template
+                  >
+                  <template v-else>❌ 已拒绝</template>
+                </span>
+              </div>
+
+              <!-- 待审批工具列表 -->
+              <div class="space-y-2 mb-3">
+                <div
+                  v-for="(tool, tIdx) in msg.tools"
+                  :key="tIdx"
+                  class="rounded-lg bg-white/60 dark:bg-gray-800/60 border border-gray-200 dark:border-gray-700 p-2.5 text-sm"
+                >
+                  <div class="flex items-center gap-1.5 mb-1">
+                    <el-tag size="small" type="warning">{{
+                      tool.toolName
+                    }}</el-tag>
+                  </div>
+                  <div
+                    v-if="tool.description"
+                    class="text-gray-600 dark:text-gray-300 text-xs mb-1.5 whitespace-pre-wrap"
+                  >
+                    {{ tool.description }}
+                  </div>
+                  <el-collapse v-if="tool.arguments">
+                    <el-collapse-item title="查看参数">
+                      <pre
+                        class="text-xs text-gray-500 whitespace-pre-wrap break-all overflow-auto max-h-40"
+                        >{{ tool.arguments }}</pre
+                      >
+                    </el-collapse-item>
+                  </el-collapse>
+                </div>
+              </div>
+
+              <!-- 操作按钮 -->
+              <div v-if="msg.approvalStatus === 'pending'" class="flex gap-2">
+                <el-button
+                  type="primary"
+                  size="small"
+                  :loading="sending"
+                  @click="approveAll(msg)"
+                >
+                  批准执行
+                </el-button>
+                <el-button
+                  type="danger"
+                  size="small"
+                  :loading="sending"
+                  @click="rejectAll(msg)"
+                >
+                  拒绝
+                </el-button>
+              </div>
+
+              <!-- 时间 -->
+              <div class="text-[10px] mt-2 text-gray-400 text-right">
+                {{ msg.time }}
+              </div>
+            </div>
+
+            <!-- ==================== 普通消息 ==================== -->
+            <div
+              v-else
               :class="[
                 'max-w-[70%] rounded-2xl px-4 py-2 text-sm shadow-sm',
                 msg.role === 'user'
@@ -233,7 +512,7 @@ onMounted(() => {
           </div>
         </template>
         <div v-else class="h-full flex-c text-gray-400 text-sm">
-          输入问题开始对话，Agent 会调用工具为你解答
+          输入问题开始对话，敏感操作会触发人工审批
         </div>
       </div>
 
