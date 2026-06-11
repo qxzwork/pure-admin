@@ -3,6 +3,19 @@ import { ref, reactive, nextTick, onMounted } from "vue";
 import { useRenderIcon } from "@/components/ReIcon/src/hooks";
 import { getToken, formatToken } from "@/utils/auth";
 import { message } from "@/utils/message";
+import { ElMessageBox } from "element-plus";
+import { Delete } from "@element-plus/icons-vue";
+import { marked } from "marked";
+
+marked.setOptions({
+  breaks: true,
+  gfm: true
+});
+
+function renderMarkdown(text: string): string {
+  if (!text) return "";
+  return marked.parse(text) as string;
+}
 
 defineOptions({ name: "AgentChat" });
 
@@ -34,7 +47,8 @@ const messages = ref<ChatMessage[]>([]);
 const sending = ref(false);
 const showThinking = ref(true);
 const chatContainerRef = ref<HTMLElement | null>(null);
-const conversationId = ref<string>(crypto.randomUUID());
+const conversationId = ref<string>("");
+const conversationList = ref<{ id: string; title: string }[]>([]);
 
 // ==================== 工具函数 ====================
 
@@ -78,6 +92,92 @@ async function postJSON<T>(url: string, body: unknown): Promise<T> {
   return resp.json();
 }
 
+// ==================== 对话历史 ====================
+
+async function fetchConversations() {
+  try {
+    const resp = await fetch("/api/agent/chat/conversations", {
+      headers: getAuthHeaders()
+    });
+    const res = await resp.json();
+    if (res.code === 200) {
+      conversationList.value = res.data ?? [];
+    }
+  } catch {
+    // ignore
+  }
+}
+
+async function loadConversation(id: string) {
+  if (!id) {
+    messages.value = [];
+    return;
+  }
+  conversationId.value = id;
+  try {
+    const resp = await fetch(`/api/agent/chat/conversations/${id}/messages`, {
+      headers: getAuthHeaders()
+    });
+    const res = await resp.json();
+    if (res.code === 200) {
+      messages.value = (res.data ?? []).map(msg => ({
+        role: msg.role as "user" | "assistant",
+        content: msg.content,
+        reasoning: "",
+        done: true,
+        time: msg.time || ""
+      }));
+      scrollToBottom();
+    }
+  } catch {
+    // ignore
+  }
+}
+
+async function saveMessage(role: string, content: string, time: string) {
+  try {
+    await fetch("/api/agent/chat/history", {
+      method: "POST",
+      headers: getAuthHeaders(),
+      body: JSON.stringify({
+        conversationId: conversationId.value,
+        role,
+        content,
+        time
+      })
+    });
+  } catch {
+    // ignore
+  }
+}
+
+async function handleDeleteConversation(id: string) {
+  try {
+    await ElMessageBox.confirm("确定删除该对话记录？", "警告", {
+      confirmButtonText: "确定",
+      cancelButtonText: "取消",
+      type: "warning"
+    });
+    const resp = await fetch(`/api/agent/chat/conversations/${id}`, {
+      method: "DELETE",
+      headers: getAuthHeaders()
+    });
+    const res = await resp.json();
+    if (res.code === 200) {
+      message("删除成功", { type: "success" });
+      if (conversationId.value === id) {
+        conversationId.value = crypto.randomUUID();
+        messages.value = [];
+      }
+      fetchConversations();
+    } else {
+      message(res?.message ?? "删除失败", { type: "error" });
+    }
+  } catch {
+    // cancelled
+  }
+}
+
 // ==================== SSE 对话 ====================
 
 function sendMessage() {
@@ -85,13 +185,15 @@ function sendMessage() {
   if (!text || sending.value) return;
 
   inputText.value = "";
+  const userTime = now();
   messages.value.push({
     role: "user",
     content: text,
     reasoning: "",
     done: true,
-    time: now()
+    time: userTime
   });
+  saveMessage("user", text, userTime);
 
   const assistantMsg = reactive<ChatMessage>({
     role: "assistant",
@@ -104,6 +206,9 @@ function sendMessage() {
   sending.value = true;
   scrollToBottom();
 
+  if (!conversationId.value) {
+    conversationId.value = crypto.randomUUID();
+  }
   const body = { message: text, conversationId: conversationId.value };
 
   fetch("/api/agent/chat/hitl", {
@@ -129,6 +234,8 @@ function sendMessage() {
               if (idx !== -1) messages.value.splice(idx, 1);
             } else {
               assistantMsg.done = true;
+              saveMessage("assistant", assistantMsg.content, assistantMsg.time);
+              fetchConversations();
             }
             sending.value = false;
             scrollToBottom();
@@ -170,12 +277,6 @@ function sendMessage() {
                 return;
               }
 
-              if (json.finished) {
-                assistantMsg.done = true;
-                sending.value = false;
-                scrollToBottom();
-                return;
-              }
               if (json.content) {
                 assistantMsg.content += json.content;
                 scrollToBottom();
@@ -186,6 +287,18 @@ function sendMessage() {
               }
               if (json.conversationId && !conversationId.value) {
                 conversationId.value = json.conversationId;
+              }
+              if (json.finished) {
+                assistantMsg.done = true;
+                sending.value = false;
+                saveMessage(
+                  "assistant",
+                  assistantMsg.content,
+                  assistantMsg.time
+                );
+                fetchConversations();
+                scrollToBottom();
+                return;
               }
             } catch {
               // ignore parse errors
@@ -199,6 +312,7 @@ function sendMessage() {
     .catch(() => {
       assistantMsg.content = "连接失败，请稍后重试";
       assistantMsg.done = true;
+      saveMessage("assistant", assistantMsg.content, assistantMsg.time);
       sending.value = false;
       scrollToBottom();
     });
@@ -236,13 +350,16 @@ function handleApprovalResponse(threadId: string, resp: any) {
 
   // 正常响应，追加 assistant 消息
   if (data.content) {
+    const t = now();
     messages.value.push({
       role: "assistant",
       content: data.content,
       reasoning: "",
       done: true,
-      time: now()
+      time: t
     });
+    saveMessage("assistant", data.content, t);
+    fetchConversations();
   }
   scrollToBottom();
 }
@@ -331,10 +448,15 @@ function handleKeydown(e: KeyboardEvent) {
 
 function clearChat() {
   messages.value = [];
-  conversationId.value = crypto.randomUUID();
+  conversationId.value = "";
 }
 
-onMounted(() => {
+onMounted(async () => {
+  await fetchConversations();
+  // 默认加载最新一次会话
+  if (conversationList.value.length > 0) {
+    await loadConversation(conversationList.value[0].id);
+  }
   scrollToBottom();
 });
 </script>
@@ -353,6 +475,36 @@ onMounted(() => {
       >
         新对话
       </el-button>
+      <div class="flex flex-col mb-3">
+        <span class="text-sm mb-1">历史对话</span>
+        <el-select
+          v-model="conversationId"
+          placeholder="选择对话"
+          clearable
+          filterable
+          size="small"
+          @change="loadConversation"
+        >
+          <el-option
+            v-for="item in conversationList"
+            :key="item.id"
+            :label="item.title"
+            :value="item.id"
+          >
+            <div class="flex-bc w-full">
+              <span class="truncate">{{ item.title }}</span>
+              <el-button
+                type="danger"
+                link
+                size="small"
+                @click.stop="handleDeleteConversation(item.id)"
+              >
+                <el-icon><Delete /></el-icon>
+              </el-button>
+            </div>
+          </el-option>
+        </el-select>
+      </div>
       <div class="flex items-center mb-3">
         <el-switch v-model="showThinking" class="mr-2" />
         <span class="text-sm">显示思考过程</span>
@@ -490,11 +642,22 @@ onMounted(() => {
               </template>
 
               <!-- 消息内容 -->
-              <div class="whitespace-pre-wrap break-all min-h-5">
+              <div
+                class="min-h-5"
+                :class="
+                  msg.role === 'user' ? 'whitespace-pre-wrap break-all' : ''
+                "
+              >
                 <template
                   v-if="msg.role === 'assistant' && !msg.content && !msg.done"
                 >
                   <span class="text-gray-400 animate-pulse">思考中...</span>
+                </template>
+                <template v-else-if="msg.role === 'assistant'">
+                  <div
+                    class="markdown-body"
+                    v-html="renderMarkdown(msg.content)"
+                  />
                 </template>
                 <template v-else>
                   {{ msg.content }}
@@ -554,5 +717,87 @@ onMounted(() => {
 
 :deep(.el-collapse-item__wrap) {
   border-bottom: none;
+}
+
+:deep(.markdown-body) {
+  font-size: 14px;
+  line-height: 1.7;
+  overflow-wrap: break-word;
+}
+
+:deep(.markdown-body p) {
+  margin: 0 0 8px;
+}
+
+:deep(.markdown-body p:last-child) {
+  margin-bottom: 0;
+}
+
+:deep(.markdown-body ul),
+:deep(.markdown-body ol) {
+  padding-left: 1.5em;
+  margin: 4px 0;
+}
+
+:deep(.markdown-body li) {
+  margin: 2px 0;
+}
+
+:deep(.markdown-body code) {
+  padding: 1px 4px;
+  font-size: 13px;
+  background: rgb(0 0 0 / 6%);
+  border-radius: 3px;
+}
+
+:deep(.markdown-body pre) {
+  padding: 10px;
+  margin: 8px 0;
+  overflow-x: auto;
+  background: rgb(0 0 0 / 6%);
+  border-radius: 6px;
+}
+
+:deep(.markdown-body pre code) {
+  padding: 0;
+  background: none;
+}
+
+:deep(.markdown-body table) {
+  width: 100%;
+  margin: 8px 0;
+  font-size: 13px;
+  border-collapse: collapse;
+}
+
+:deep(.markdown-body th),
+:deep(.markdown-body td) {
+  padding: 6px 10px;
+  text-align: left;
+  border: 1px solid var(--el-border-color);
+}
+
+:deep(.markdown-body th) {
+  font-weight: 600;
+  background: var(--el-fill-color-light);
+}
+
+:deep(.markdown-body blockquote) {
+  padding-left: 10px;
+  margin: 8px 0;
+  color: var(--el-text-color-secondary);
+  border-left: 3px solid var(--el-border-color);
+}
+
+:deep(.markdown-body h1),
+:deep(.markdown-body h2),
+:deep(.markdown-body h3),
+:deep(.markdown-body h4) {
+  margin: 12px 0 6px;
+  font-weight: 600;
+}
+
+:deep(.markdown-body strong) {
+  font-weight: 600;
 }
 </style>
