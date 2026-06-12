@@ -170,22 +170,24 @@ onMounted(() => {
   <div class="text-to-sql-container">
     <!-- 左侧面板 -->
     <div class="text-to-sql-sidebar">
-      <el-button
-        type="primary"
-        class="w-full mb-3"
-        :icon="useRenderIcon('ri/chat-new-line')"
-        @click="clearHistory"
-      >
-        新查询
-      </el-button>
+      <div class="btn-group mb-3">
+        <el-button
+          type="primary"
+          class="w-full"
+          :icon="useRenderIcon('ri/chat-new-line')"
+          @click="clearHistory"
+        >
+          新查询
+        </el-button>
 
-      <el-button
-        class="w-full mb-3"
-        :icon="useRenderIcon('ri/database-2-line')"
-        @click="showSchemaPanel = true"
-      >
-        Schema 管理
-      </el-button>
+        <el-button
+          class="w-full"
+          :icon="useRenderIcon('ri/database-2-line')"
+          @click="showSchemaPanel = true"
+        >
+          Schema 管理
+        </el-button>
+      </div>
 
       <!-- Schema 状态 -->
       <div v-if="schemaStatus" class="mb-3 p-2 bg-gray-50 rounded text-xs">
@@ -411,6 +413,16 @@ onMounted(() => {
   padding: 12px;
   background: var(--el-bg-color);
   border-right: 1px solid var(--el-border-color);
+}
+
+.btn-group {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.btn-group :deep(.el-button + .el-button) {
+  margin-left: 0;
 }
 
 .text-to-sql-main {
