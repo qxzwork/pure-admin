@@ -408,85 +408,83 @@ onMounted(() => {
   <div class="rag-chat-container">
     <!-- 左侧 -->
     <div class="rag-chat-sidebar">
-      <el-button
-        type="primary"
-        class="w-full mb-3"
-        :icon="useRenderIcon('ri/chat-new-line')"
-        @click="clearChat"
-      >
-        新对话
-      </el-button>
-      <div class="flex flex-col mb-3">
-        <span class="text-sm mb-1">历史对话</span>
-        <el-select
-          v-model="conversationId"
-          placeholder="选择对话"
-          clearable
-          filterable
-          size="small"
-          @change="loadConversation"
+      <button class="new-chat-btn" @click="clearChat">
+        <svg
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
         >
-          <el-option
+          <path d="M12 5v14M5 12h14" />
+        </svg>
+        <span>新对话</span>
+      </button>
+
+      <div class="sidebar-conversations">
+        <div class="conversations-label">历史对话</div>
+        <div class="conversations-list">
+          <div
             v-for="item in conversationList"
             :key="item.id"
-            :label="item.title"
-            :value="item.id"
+            class="conversation-item"
+            :class="{ active: conversationId === item.id }"
+            @click="loadConversation(item.id)"
           >
-            <div class="flex-bc w-full">
-              <span class="truncate">{{ item.title }}</span>
-              <el-button
-                type="danger"
-                link
-                size="small"
-                @click.stop="handleDeleteConversation(item.id)"
-              >
-                <el-icon><Delete /></el-icon>
-              </el-button>
-            </div>
-          </el-option>
-        </el-select>
+            <svg
+              class="conv-icon"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+            >
+              <path
+                d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"
+              />
+            </svg>
+            <span class="conv-title">{{ item.title }}</span>
+            <button
+              class="conv-delete"
+              title="删除对话"
+              @click.stop="handleDeleteConversation(item.id)"
+            >
+              <Delete />
+            </button>
+          </div>
+          <div v-if="conversationList.length === 0" class="conversations-empty">
+            暂无历史对话
+          </div>
+        </div>
       </div>
-      <div class="flex items-center mb-3">
-        <el-switch v-model="showThinking" class="mr-2" />
-        <span class="text-sm">显示执行流程</span>
-      </div>
-      <div class="flex items-center mb-3">
-        <el-switch
-          v-model="queryRewriteEnabled"
-          class="mr-2"
-          :loading="queryRewriteLoading"
-          @change="handleQueryRewriteChange"
-        />
-        <span class="text-sm">查询改写</span>
-      </div>
-      <div class="flex items-center mb-3">
-        <el-switch
-          v-model="multiRoundSearchEnabled"
-          class="mr-2"
-          :loading="multiRoundSearchLoading"
-          @change="handleMultiRoundSearchChange"
-        />
-        <span class="text-sm">多轮检索</span>
-      </div>
-      <div class="flex flex-col mb-3">
-        <span class="text-sm mb-1">来源筛选</span>
-        <el-select
-          v-model="sourceFilter"
-          placeholder="全部来源"
-          clearable
-          filterable
-          size="small"
-        >
-          <el-option
-            v-for="item in sourceOptions"
-            :key="item"
-            :label="item"
-            :value="item"
+
+      <div class="sidebar-settings">
+        <div class="settings-label">设置</div>
+        <div class="setting-item">
+          <el-switch v-model="showThinking" size="small" />
+          <span class="setting-text">显示执行流程</span>
+        </div>
+        <div class="setting-item">
+          <el-switch
+            v-model="queryRewriteEnabled"
+            size="small"
+            :loading="queryRewriteLoading"
+            @change="handleQueryRewriteChange"
           />
-        </el-select>
+          <span class="setting-text">查询改写</span>
+        </div>
+        <div class="setting-item">
+          <el-switch
+            v-model="multiRoundSearchEnabled"
+            size="small"
+            :loading="multiRoundSearchLoading"
+            @change="handleMultiRoundSearchChange"
+          />
+          <span class="setting-text">多轮检索</span>
+        </div>
       </div>
-      <div class="text-xs text-gray-400 mt-auto">
-        RAG 智能问答，流式输出，实时展示执行流程。
+
+      <div class="sidebar-footer">
+        <div class="footer-text">RAG 智能问答</div>
+        <div class="footer-sub">流式输出，实时展示执行流程</div>
       </div>
     </div>
 
@@ -494,237 +492,292 @@ onMounted(() => {
     <div class="rag-chat-main">
       <div ref="chatContainerRef" class="rag-chat-messages">
         <template v-if="messages.length">
-          <div
-            v-for="(msg, idx) in messages"
-            :key="idx"
-            :class="[
-              'flex',
-              msg.role === 'user' ? 'justify-end' : 'justify-start'
-            ]"
-          >
+          <div class="messages-container">
             <div
-              :class="[
-                'max-w-[70%] rounded-2xl px-4 py-2 text-sm shadow-sm',
-                msg.role === 'user'
-                  ? 'bg-(--el-color-primary) text-white rounded-br-sm'
-                  : 'bg-(--el-fill-color-light) text-(--el-text-color-primary) rounded-bl-sm'
-              ]"
+              v-for="(msg, idx) in messages"
+              :key="idx"
+              class="message-wrapper"
+              :class="[`message-${msg.role}`]"
             >
-              <!-- 执行流程 -->
-              <template v-if="showThinking && msg.steps.length">
-                <div class="thinking-process">
-                  <div class="thinking-header">
-                    <iconify-icon-offline
-                      icon="ri:flow-chart"
-                      class="size-4 text-gray-500"
-                    />
-                    <span>执行流程</span>
-                    <el-tag size="small" type="info" class="ml-auto">
-                      {{ msg.steps.filter(s => s.status === "done").length }}/{{
-                        msg.steps.length
-                      }}
-                    </el-tag>
+              <!-- 用户消息 -->
+              <div
+                v-if="msg.role === 'user'"
+                class="message-content-wrapper user-message-wrapper"
+              >
+                <div class="user-avatar">
+                  <span>U</span>
+                </div>
+                <div class="user-message-content">
+                  <div class="message-text whitespace-pre-wrap break-all">
+                    {{ msg.content }}
                   </div>
-                  <div class="thinking-timeline">
-                    <div
-                      v-for="(step, si) in msg.steps"
-                      :key="si"
-                      :class="[
-                        'timeline-item',
-                        `timeline-${getStepStatus(step)}`
-                      ]"
-                    >
-                      <div class="timeline-node">
-                        <div class="timeline-dot">
-                          <iconify-icon-offline
-                            v-if="getStepStatus(step) === 'active'"
-                            icon="ri:loader-4-line"
-                            class="size-3 animate-spin"
-                          />
-                          <iconify-icon-offline
-                            v-else-if="getStepStatus(step) === 'done'"
-                            icon="ri:check-line"
-                            class="size-3"
-                          />
-                          <div v-else class="size-2 rounded-full bg-gray-300" />
-                        </div>
-                        <div
-                          v-if="si < msg.steps.length - 1"
-                          class="timeline-line"
-                        />
-                      </div>
-                      <div class="timeline-content">
-                        <div class="timeline-header">
-                          <span class="timeline-title">
-                            {{ getStepLabel(step.stage) }}
-                          </span>
-                          <el-tag
-                            v-if="
-                              step.stage === 'rewrite' && step.status === 'done'
-                            "
-                            :type="step.queryRewritten ? 'warning' : 'info'"
-                            size="small"
-                            class="ml-2"
-                          >
-                            {{ step.queryRewritten ? "已重写" : "原始问题" }}
-                          </el-tag>
-                          <el-tag
-                            v-if="
-                              step.stage === 'retrieve' &&
-                              step.status === 'done'
-                            "
-                            type="info"
-                            size="small"
-                            class="ml-2"
-                          >
-                            {{ step.count }} 条结果
-                          </el-tag>
-                        </div>
+                  <div class="message-time">
+                    {{ msg.time }}
+                  </div>
+                </div>
+              </div>
 
-                        <!-- 问题改写详情 -->
+              <!-- AI 消息 -->
+              <div v-else class="message-content-wrapper ai-message-wrapper">
+                <div class="ai-avatar">
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                  >
+                    <path
+                      d="M12 2a7 7 0 0 1 7 7v1a7 7 0 0 1-7 7 7 7 0 0 1-7-7v-1a7 7 0 0 1 7-7z"
+                    />
+                    <path d="M12 17v4" />
+                    <path d="M8 21h8" />
+                  </svg>
+                </div>
+                <div class="ai-message-content">
+                  <!-- 执行流程 -->
+                  <template v-if="showThinking && msg.steps.length">
+                    <div class="thinking-process">
+                      <div class="thinking-header">
+                        <iconify-icon-offline
+                          icon="ri:flow-chart"
+                          class="size-4 text-gray-500"
+                        />
+                        <span>执行流程</span>
+                        <el-tag size="small" type="info" class="ml-auto">
+                          {{
+                            msg.steps.filter(s => s.status === "done").length
+                          }}/{{ msg.steps.length }}
+                        </el-tag>
+                      </div>
+                      <div class="thinking-timeline">
                         <div
-                          v-if="
-                            step.stage === 'rewrite' &&
-                            step.status === 'done' &&
-                            step.queryRewritten
-                          "
-                          class="timeline-detail"
+                          v-for="(step, si) in msg.steps"
+                          :key="si"
+                          :class="[
+                            'timeline-item',
+                            `timeline-${getStepStatus(step)}`
+                          ]"
                         >
-                          <div class="rewrite-box">
-                            <div class="rewrite-original">
-                              <span class="rewrite-label">原始</span>
-                              <span>{{ step.original }}</span>
-                            </div>
-                            <div class="rewrite-arrow">
+                          <div class="timeline-node">
+                            <div class="timeline-dot">
                               <iconify-icon-offline
-                                icon="ri:arrow-down-line"
-                                class="size-4 text-orange-400"
+                                v-if="getStepStatus(step) === 'active'"
+                                icon="ri:loader-4-line"
+                                class="size-3 animate-spin"
+                              />
+                              <iconify-icon-offline
+                                v-else-if="getStepStatus(step) === 'done'"
+                                icon="ri:check-line"
+                                class="size-3"
+                              />
+                              <div
+                                v-else
+                                class="size-2 rounded-full bg-gray-300"
                               />
                             </div>
-                            <div class="rewrite-rewritten">
-                              <span class="rewrite-label">改写</span>
-                              <span>{{ step.rewritten }}</span>
+                            <div
+                              v-if="si < msg.steps.length - 1"
+                              class="timeline-line"
+                            />
+                          </div>
+                          <div class="timeline-content">
+                            <div class="timeline-header">
+                              <span class="timeline-title">
+                                {{ getStepLabel(step.stage) }}
+                              </span>
+                              <el-tag
+                                v-if="
+                                  step.stage === 'rewrite' &&
+                                  step.status === 'done'
+                                "
+                                :type="step.queryRewritten ? 'warning' : 'info'"
+                                size="small"
+                                class="ml-2"
+                              >
+                                {{
+                                  step.queryRewritten ? "已重写" : "原始问题"
+                                }}
+                              </el-tag>
+                              <el-tag
+                                v-if="
+                                  step.stage === 'retrieve' &&
+                                  step.status === 'done'
+                                "
+                                type="info"
+                                size="small"
+                                class="ml-2"
+                              >
+                                {{ step.count }} 条结果
+                              </el-tag>
+                            </div>
+
+                            <!-- 问题改写详情 -->
+                            <div
+                              v-if="
+                                step.stage === 'rewrite' &&
+                                step.status === 'done' &&
+                                step.queryRewritten
+                              "
+                              class="timeline-detail"
+                            >
+                              <div class="rewrite-box">
+                                <div class="rewrite-original">
+                                  <span class="rewrite-label">原始</span>
+                                  <span>{{ step.original }}</span>
+                                </div>
+                                <div class="rewrite-arrow">
+                                  <iconify-icon-offline
+                                    icon="ri:arrow-down-line"
+                                    class="size-4 text-orange-400"
+                                  />
+                                </div>
+                                <div class="rewrite-rewritten">
+                                  <span class="rewrite-label">改写</span>
+                                  <span>{{ step.rewritten }}</span>
+                                </div>
+                              </div>
+                            </div>
+
+                            <!-- 检索结果预览 -->
+                            <div
+                              v-if="
+                                step.stage === 'retrieve' &&
+                                step.status === 'done' &&
+                                step.chunks?.length
+                              "
+                              class="timeline-detail"
+                            >
+                              <div class="chunks-list">
+                                <div
+                                  v-for="(chunk, ci) in getChunksPreview(
+                                    step.chunks
+                                  )"
+                                  :key="ci"
+                                  class="chunk-item"
+                                >
+                                  <div class="chunk-score">
+                                    {{ (chunk.score * 100).toFixed(0) }}%
+                                  </div>
+                                  <div class="chunk-info">
+                                    <div class="chunk-source">
+                                      {{ chunk.source }}
+                                    </div>
+                                    <div class="chunk-content">
+                                      {{ chunk.content }}
+                                    </div>
+                                  </div>
+                                </div>
+                                <div
+                                  v-if="hasMoreChunks(step.chunks)"
+                                  class="chunks-more"
+                                >
+                                  还有
+                                  {{ step.chunks.length - 3 }} 条相关结果...
+                                </div>
+                              </div>
+                            </div>
+
+                            <!-- 加载中状态 -->
+                            <div
+                              v-if="getStepStatus(step) === 'active'"
+                              class="timeline-loading"
+                            >
+                              {{ step.message || "处理中..." }}
                             </div>
                           </div>
-                        </div>
-
-                        <!-- 检索结果预览 -->
-                        <div
-                          v-if="
-                            step.stage === 'retrieve' &&
-                            step.status === 'done' &&
-                            step.chunks?.length
-                          "
-                          class="timeline-detail"
-                        >
-                          <div class="chunks-list">
-                            <div
-                              v-for="(chunk, ci) in getChunksPreview(
-                                step.chunks
-                              )"
-                              :key="ci"
-                              class="chunk-item"
-                            >
-                              <div class="chunk-score">
-                                {{ (chunk.score * 100).toFixed(0) }}%
-                              </div>
-                              <div class="chunk-info">
-                                <div class="chunk-source">
-                                  {{ chunk.source }}
-                                </div>
-                                <div class="chunk-content">
-                                  {{ chunk.content }}
-                                </div>
-                              </div>
-                            </div>
-                            <div
-                              v-if="hasMoreChunks(step.chunks)"
-                              class="chunks-more"
-                            >
-                              还有 {{ step.chunks.length - 3 }} 条相关结果...
-                            </div>
-                          </div>
-                        </div>
-
-                        <!-- 加载中状态 -->
-                        <div
-                          v-if="getStepStatus(step) === 'active'"
-                          class="timeline-loading"
-                        >
-                          {{ step.message || "处理中..." }}
                         </div>
                       </div>
                     </div>
+                  </template>
+
+                  <!-- 消息内容 -->
+                  <div class="message-body">
+                    <template v-if="!msg.content && !msg.done">
+                      <div class="typing-indicator">
+                        <span />
+                        <span />
+                        <span />
+                      </div>
+                    </template>
+                    <template v-else>
+                      <div
+                        class="markdown-body"
+                        v-html="renderMarkdown(msg.content)"
+                      />
+                    </template>
+                  </div>
+
+                  <div class="message-time">
+                    {{ msg.time }}
                   </div>
                 </div>
-              </template>
-
-              <!-- 消息内容 -->
-              <div class="min-h-5">
-                <template
-                  v-if="msg.role === 'assistant' && !msg.content && !msg.done"
-                >
-                  <span class="text-gray-400 animate-pulse">思考中...</span>
-                </template>
-                <template v-else-if="msg.role === 'assistant'">
-                  <div
-                    class="markdown-body"
-                    v-html="renderMarkdown(msg.content)"
-                  />
-                </template>
-                <template v-else>
-                  <div class="whitespace-pre-wrap break-all">
-                    {{ msg.content }}
-                  </div>
-                </template>
-              </div>
-
-              <!-- 时间 -->
-              <div
-                class="text-[10px] mt-1 text-right"
-                :class="msg.role === 'user' ? 'text-white/60' : 'text-gray-400'"
-              >
-                {{ msg.time }}
               </div>
             </div>
           </div>
         </template>
-        <div v-else class="h-full flex-c text-gray-400 text-sm">
-          输入问题开始对话，我会基于知识库内容为你解答
+        <!-- 空状态 -->
+        <div v-else class="empty-state">
+          <div class="empty-icon">
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.5"
+            >
+              <path
+                d="M12 2a7 7 0 0 1 7 7v1a7 7 0 0 1-7 7 7 7 0 0 1-7-7v-1a7 7 0 0 1 7-7z"
+              />
+              <path d="M12 17v4" />
+              <path d="M8 21h8" />
+              <circle cx="9" cy="9" r="1" fill="currentColor" />
+              <circle cx="15" cy="9" r="1" fill="currentColor" />
+              <path d="M9.5 13a3.5 3.5 0 0 0 5 0" />
+            </svg>
+          </div>
+          <h2 class="empty-title">RAG 智能问答</h2>
+          <p class="empty-desc">
+            基于知识库内容为你解答问题，支持流式输出和实时展示执行流程
+          </p>
         </div>
       </div>
 
       <!-- 输入区 -->
-      <div class="rag-chat-input">
-        <el-input
-          v-model="inputText"
-          type="textarea"
-          :rows="1"
-          autosize
-          placeholder="输入问题，Enter 发送，Shift+Enter 换行"
-          class="flex-1"
-          :disabled="sending"
-          @keydown="handleKeydown"
-        />
-        <el-button
-          type="primary"
-          :icon="useRenderIcon('ri/send-plane-fill')"
-          :loading="sending"
-          @click="sendMessage"
-        >
-          发送
-        </el-button>
+      <div class="rag-input-area">
+        <div class="rag-chat-input">
+          <el-input
+            v-model="inputText"
+            type="textarea"
+            :rows="1"
+            autosize
+            placeholder="输入问题，Enter 发送，Shift+Enter 换行"
+            class="flex-1"
+            :disabled="sending"
+            @keydown="handleKeydown"
+          />
+          <el-button
+            type="primary"
+            :icon="useRenderIcon('ri/send-plane-fill')"
+            :loading="sending"
+            @click="sendMessage"
+          >
+            发送
+          </el-button>
+        </div>
+        <div class="input-hint">
+          <span>Enter 发送 · Shift+Enter 换行</span>
+        </div>
       </div>
     </div>
   </div>
 </template>
 
 <style scoped>
-/* 布局样式 */
+/* ==================== 布局样式 ==================== */
 .rag-chat-container {
   position: fixed;
   inset: 82px 0 0 210px;
   display: flex;
+  overflow: hidden;
   background: var(--el-bg-color);
 }
 
@@ -732,10 +785,164 @@ onMounted(() => {
   display: flex;
   flex-shrink: 0;
   flex-direction: column;
-  width: 200px;
-  padding: 12px;
-  background: var(--el-bg-color);
-  border-right: 1px solid var(--el-border-color);
+  width: 220px;
+  background: var(--el-bg-color-page);
+  border-right: 1px solid var(--el-border-color-lighter);
+}
+
+/* ==================== 侧边栏组件 ==================== */
+.new-chat-btn {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: center;
+  padding: 10px 16px;
+  margin: 12px 16px;
+  font-size: 14px;
+  font-weight: 500;
+  color: white;
+  cursor: pointer;
+  background: var(--el-color-primary);
+  border: none;
+  border-radius: 10px;
+  transition: all 0.2s;
+}
+
+.new-chat-btn:hover {
+  background: var(--el-color-primary-light-3);
+  transform: translateY(-1px);
+}
+
+.new-chat-btn svg {
+  width: 18px;
+  height: 18px;
+}
+
+.sidebar-conversations {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.conversations-label,
+.settings-label {
+  padding: 12px 16px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--el-text-color-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.conversations-list {
+  flex: 1;
+  padding: 0 8px;
+  overflow-y: auto;
+}
+
+.conversation-item {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 10px 12px;
+  margin-bottom: 2px;
+  cursor: pointer;
+  border-radius: 8px;
+  transition: all 0.2s;
+}
+
+.conversation-item:hover {
+  background: var(--el-fill-color);
+}
+
+.conversation-item.active {
+  color: var(--el-color-primary);
+  background: var(--el-color-primary-light-9);
+}
+
+.conv-icon {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  color: var(--el-text-color-secondary);
+}
+
+.conversation-item.active .conv-icon {
+  color: var(--el-color-primary);
+}
+
+.conv-title {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.conv-delete {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  color: var(--el-text-color-secondary);
+  cursor: pointer;
+  background: none;
+  border: none;
+  border-radius: 4px;
+  opacity: 0;
+  transition: all 0.2s;
+}
+
+.conversation-item:hover .conv-delete {
+  opacity: 1;
+}
+
+.conv-delete:hover {
+  color: var(--el-color-danger);
+  background: var(--el-color-danger-light-9);
+}
+
+.conversations-empty {
+  padding: 24px 12px;
+  font-size: 13px;
+  color: var(--el-text-color-secondary);
+  text-align: center;
+}
+
+.sidebar-settings {
+  padding: 0 16px 16px;
+}
+
+.setting-item {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 8px 0;
+}
+
+.setting-text {
+  font-size: 13px;
+  color: var(--el-text-color-regular);
+}
+
+.sidebar-footer {
+  padding: 16px;
+  border-top: 1px solid var(--el-border-color-lighter);
+}
+
+.footer-text {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+
+.footer-sub {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--el-text-color-secondary);
+  opacity: 0.7;
 }
 
 .rag-chat-main {
@@ -748,22 +955,223 @@ onMounted(() => {
 
 .rag-chat-messages {
   flex: 1;
-  padding: 16px;
-  overflow: auto;
+  padding: 24px 20px;
+  overflow-y: auto;
+  scroll-behavior: smooth;
 }
 
 .rag-chat-messages > :not(:first-child) {
-  margin-top: 16px;
+  margin-top: 0;
 }
 
 .rag-chat-input {
   display: flex;
   flex-shrink: 0;
-  gap: 8px;
+  gap: 12px;
   align-items: flex-end;
-  padding: 12px;
+  max-width: 768px;
+  padding: 12px 16px;
+  margin: 0 auto;
+  background: var(--el-fill-color-lighter);
+  border: 1px solid var(--el-border-color);
+  border-radius: 16px;
+  transition: all 0.2s;
+}
+
+.rag-chat-input:focus-within {
+  border-color: var(--el-color-primary);
+  box-shadow: 0 0 0 3px var(--el-color-primary-light-9);
+}
+
+/* 输入区域容器 */
+.rag-input-area {
+  padding: 16px 20px 20px;
   background: var(--el-bg-color);
-  border-top: 1px solid var(--el-border-color);
+}
+
+.input-hint {
+  max-width: 768px;
+  margin: 8px auto 0;
+  font-size: 11px;
+  color: var(--el-text-color-secondary);
+  text-align: center;
+}
+
+/* ==================== 消息气泡样式 ==================== */
+.messages-container {
+  max-width: 768px;
+  margin: 0 auto;
+}
+
+.message-wrapper {
+  margin-bottom: 24px;
+  animation: message-in 0.3s ease;
+}
+
+@keyframes message-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.message-content-wrapper {
+  display: flex;
+  gap: 16px;
+}
+
+.user-message-wrapper {
+  flex-direction: row-reverse;
+}
+
+.user-avatar,
+.ai-avatar {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  font-size: 14px;
+  font-weight: 600;
+  border-radius: 8px;
+}
+
+.user-avatar {
+  color: white;
+  background: var(--el-color-primary);
+}
+
+.ai-avatar {
+  color: var(--el-color-primary);
+  background: var(--el-color-primary-light-8);
+}
+
+.ai-avatar svg {
+  width: 18px;
+  height: 18px;
+}
+
+.user-message-content,
+.ai-message-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.user-message-content {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+
+.message-text {
+  max-width: 80%;
+  padding: 10px 16px;
+  font-size: 14px;
+  line-height: 1.6;
+  color: white;
+  background: var(--el-color-primary);
+  border-radius: 12px 12px 2px;
+}
+
+.ai-message-content {
+  padding: 16px;
+  background: var(--el-fill-color-lighter);
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 12px 12px 12px 2px;
+}
+
+.message-body {
+  min-height: 24px;
+}
+
+.message-time {
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--el-text-color-secondary);
+}
+
+.user-message-content .message-time {
+  margin-right: 4px;
+}
+
+/* ==================== 打字指示器 ==================== */
+.typing-indicator {
+  display: flex;
+  gap: 4px;
+  padding: 8px 0;
+}
+
+.typing-indicator span {
+  width: 8px;
+  height: 8px;
+  background: var(--el-color-primary);
+  border-radius: 50%;
+  animation: typing 1.4s infinite ease-in-out;
+}
+
+.typing-indicator span:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.typing-indicator span:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+@keyframes typing {
+  0%,
+  60%,
+  100% {
+    opacity: 0.4;
+    transform: translateY(0);
+  }
+
+  30% {
+    opacity: 1;
+    transform: translateY(-8px);
+  }
+}
+
+/* ==================== 空状态 ==================== */
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: 20px;
+}
+
+.empty-icon {
+  width: 64px;
+  height: 64px;
+  margin-bottom: 20px;
+  color: var(--el-color-primary);
+  opacity: 0.6;
+}
+
+.empty-icon svg {
+  width: 100%;
+  height: 100%;
+}
+
+.empty-title {
+  margin: 0 0 8px;
+  font-size: 24px;
+  font-weight: 600;
+  color: var(--el-text-color-primary);
+}
+
+.empty-desc {
+  margin: 0;
+  font-size: 14px;
+  color: var(--el-text-color-secondary);
+  text-align: center;
 }
 
 /* 执行流程时间线样式 */
