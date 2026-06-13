@@ -123,7 +123,9 @@ async function fetchConversations() {
     });
     const res = await resp.json();
     if (res.code === 200) {
-      conversationList.value = res.data ?? [];
+      conversationList.value = (res.data ?? []).filter(
+        (c: { id: string }) => c.id
+      );
     }
   } catch {
     // ignore
@@ -174,6 +176,7 @@ async function saveMessage(role: string, content: string, time: string) {
 }
 
 async function handleDeleteConversation(id: string) {
+  if (!id) return;
   try {
     await ElMessageBox.confirm("确定删除该对话记录？", "警告", {
       confirmButtonText: "确定",
