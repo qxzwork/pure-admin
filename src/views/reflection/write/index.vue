@@ -11,7 +11,8 @@ import hljs from "highlight.js";
 import type {
   WritingRequest,
   WritingResponse,
-  ReflectionHistory
+  ReflectionHistory,
+  SectionProgress
 } from "@/api/reflection";
 import { getAllReflectionHistory } from "@/api/reflection";
 
@@ -102,7 +103,13 @@ const result = reactive<WritingResponse>({
   totalSections: undefined,
   currentSection: undefined,
   antiAiScore: undefined,
-  consistencyScore: undefined
+  consistencyScore: undefined,
+  progressPercent: undefined,
+  stageLabel: undefined,
+  stageDetail: undefined,
+  estimatedRemainingMs: undefined,
+  completedSections: undefined,
+  sectionProgressList: undefined
 });
 
 const historyList = ref<
@@ -147,6 +154,12 @@ function resetResult() {
   result.currentSection = undefined;
   result.antiAiScore = undefined;
   result.consistencyScore = undefined;
+  result.progressPercent = undefined;
+  result.stageLabel = undefined;
+  result.stageDetail = undefined;
+  result.estimatedRemainingMs = undefined;
+  result.completedSections = undefined;
+  result.sectionProgressList = undefined;
 }
 
 function getAuthHeaders(): Record<string, string> {
@@ -178,50 +191,95 @@ function startWriting() {
   if (targetWordCount.value) body.targetWordCount = targetWordCount.value;
   if (customStyle.value.trim()) body.customStyle = customStyle.value.trim();
 
+  console.log("[SSE] 发送请求:", body.topic);
   fetch("/api/reflection/write/stream", {
     method: "POST",
     headers: getAuthHeaders(),
     body: JSON.stringify(body)
   })
     .then(response => {
+      console.log(
+        "[SSE] 收到响应: status=" +
+          response.status +
+          ", body=" +
+          !!response.body +
+          ", type=" +
+          response.headers.get("content-type")
+      );
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const reader = response.body!.getReader();
+      if (!response.body) {
+        console.error("[SSE] response.body 为空，无法读取流");
+        result.errorMessage = "响应流不可用，请使用同步模式";
+        result.finished = true;
+        sending.value = false;
+        return;
+      }
+      const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
+      let chunkCount = 0;
 
       function read() {
-        reader.read().then(({ done, value }) => {
-          if (done) {
-            result.finished = true;
-            sending.value = false;
-            loadHistory();
-            scrollToResult();
-            return;
-          }
-
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split("\n");
-          buffer = lines.pop()!;
-
-          for (const line of lines) {
-            const trimmed = line.trim();
-            if (!trimmed || !trimmed.startsWith("data:")) continue;
-            const dataStr = trimmed.slice(5).trim();
-            if (!dataStr) continue;
-
-            try {
-              const data: WritingResponse = JSON.parse(dataStr);
-              applyUpdate(data);
-            } catch {
-              // ignore parse errors
+        reader
+          .read()
+          .then(({ done, value }) => {
+            if (done) {
+              console.log("[SSE] 流结束, chunkCount=" + chunkCount);
+              result.finished = true;
+              sending.value = false;
+              loadHistory();
+              scrollToResult();
+              return;
             }
-          }
-          read();
-        });
+
+            chunkCount++;
+            const raw = decoder.decode(value, { stream: true });
+            console.log(
+              "[SSE] chunk #" +
+                chunkCount +
+                ", 长度=" +
+                raw.length +
+                ", 内容=" +
+                raw.substring(0, 200)
+            );
+            buffer += raw;
+            const lines = buffer.split("\n");
+            buffer = lines.pop()!;
+
+            for (const line of lines) {
+              const trimmed = line.trim();
+              if (!trimmed || !trimmed.startsWith("data:")) continue;
+              const dataStr = trimmed.slice(5).trim();
+              if (!dataStr) continue;
+
+              try {
+                const data: WritingResponse = JSON.parse(dataStr);
+                console.log(
+                  "[SSE] 解析成功:",
+                  data.currentNode,
+                  data.progressPercent + "%",
+                  data.stageLabel
+                );
+                applyUpdate(data);
+              } catch (e) {
+                console.error(
+                  "[SSE] JSON解析失败:",
+                  e,
+                  "raw:",
+                  dataStr.substring(0, 200)
+                );
+              }
+            }
+            read();
+          })
+          .catch(readErr => {
+            console.error("[SSE] reader.read() 异常:", readErr);
+          });
       }
       read();
     })
-    .catch(() => {
+    .catch(error => {
+      console.error("[SSE] fetch 请求失败:", error);
       result.errorMessage = "连接失败，请稍后重试";
       result.finished = true;
       sending.value = false;
@@ -259,6 +317,17 @@ function applyUpdate(data: WritingResponse) {
     result.antiAiScore = data.antiAiScore;
   if (data.consistencyScore !== undefined && data.consistencyScore !== null)
     result.consistencyScore = data.consistencyScore;
+  // 进度字段 - 直接赋值，不做严格判断
+  if (data.progressPercent !== undefined)
+    result.progressPercent = data.progressPercent;
+  if (data.stageLabel !== undefined) result.stageLabel = data.stageLabel;
+  if (data.stageDetail !== undefined) result.stageDetail = data.stageDetail;
+  if (data.estimatedRemainingMs !== undefined)
+    result.estimatedRemainingMs = data.estimatedRemainingMs;
+  if (data.completedSections !== undefined)
+    result.completedSections = data.completedSections;
+  if (data.sectionProgressList)
+    result.sectionProgressList = data.sectionProgressList;
   scrollToResult();
 }
 
@@ -746,15 +815,109 @@ onMounted(() => {
 
         <div ref="resultContainerRef" class="results-scroll">
           <div class="results-inner">
-            <!-- 执行中指示 -->
-            <div v-if="sending && result.currentNode" class="executing-bar">
+            <!-- 完整进度面板 -->
+            <div
+              v-if="
+                sending ||
+                (result.progressPercent !== undefined && !result.finished)
+              "
+              class="progress-panel"
+            >
+              <!-- 进度条 -->
+              <el-progress
+                :percentage="result.progressPercent || 0"
+                :status="result.finished ? 'success' : undefined"
+                :stroke-width="12"
+                striped
+                :striped-flow="sending"
+              />
+
+              <!-- 阶段信息 -->
+              <div class="stage-info">
+                <span class="stage-label">{{
+                  result.stageLabel || "准备中..."
+                }}</span>
+                <span v-if="result.stageDetail" class="stage-detail">{{
+                  result.stageDetail
+                }}</span>
+              </div>
+
+              <!-- 统计信息 -->
+              <div class="progress-stats">
+                <div
+                  v-if="result.completedSections !== undefined"
+                  class="stat-item"
+                >
+                  <span class="stat-icon">📖</span>
+                  <span
+                    >已完成 {{ result.completedSections }}/{{
+                      result.totalSections || "?"
+                    }}
+                    章</span
+                  >
+                </div>
+                <div v-if="result.estimatedRemainingMs" class="stat-item">
+                  <span class="stat-icon">⏱️</span>
+                  <span
+                    >预计剩余
+                    {{ formatDuration(result.estimatedRemainingMs) }}</span
+                  >
+                </div>
+                <div v-if="result.iterations" class="stat-item">
+                  <span class="stat-icon">🔄</span>
+                  <span>当前迭代第 {{ result.iterations }} 次</span>
+                </div>
+              </div>
+
+              <!-- 章节进度列表 -->
+              <div
+                v-if="result.sectionProgressList?.length"
+                class="section-progress-list"
+              >
+                <div
+                  v-for="section in result.sectionProgressList"
+                  :key="section.index"
+                  class="section-item"
+                  :class="section.status"
+                >
+                  <span class="section-index">{{ section.index + 1 }}</span>
+                  <span class="section-title">{{
+                    section.title || `第${section.index + 1}章`
+                  }}</span>
+                  <span v-if="section.score" class="section-score"
+                    >{{ section.score }}分</span
+                  >
+                  <span class="section-status-icon">
+                    {{
+                      section.status === "completed"
+                        ? "✓"
+                        : section.status === "writing"
+                          ? "✎"
+                          : section.status === "evaluating"
+                            ? "◎"
+                            : "○"
+                    }}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <!-- 执行中指示（简化版，无进度时显示） -->
+            <div
+              v-if="sending && !result.progressPercent && result.currentNode"
+              class="executing-bar"
+            >
               <div class="executing-dot" />
               <span>{{ result.currentNode }}</span>
             </div>
 
-            <!-- 加载中 -->
+            <!-- 加载中（无进度时显示） -->
             <div
-              v-if="sending && !result.iterationDetails?.length"
+              v-if="
+                sending &&
+                !result.progressPercent &&
+                !result.iterationDetails?.length
+              "
               class="loading-section"
             >
               <div class="typing-indicator"><span /><span /><span /></div>
@@ -1346,7 +1509,152 @@ onMounted(() => {
   }
 }
 
-/* ========== 执行中指示 ========== */
+/* ========== 进度面板 ========== */
+.progress-panel {
+  padding: 20px;
+  margin-bottom: 16px;
+  background: linear-gradient(
+    135deg,
+    var(--el-color-primary-light-9) 0%,
+    var(--el-bg-color) 100%
+  );
+  border: 1px solid var(--el-color-primary-light-7);
+  border-radius: 12px;
+}
+
+.stage-info {
+  margin-top: 16px;
+  text-align: center;
+}
+
+.stage-label {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--el-color-primary);
+}
+
+.stage-detail {
+  display: block;
+  margin-top: 6px;
+  font-size: 13px;
+  color: var(--el-text-color-secondary);
+}
+
+.progress-stats {
+  display: flex;
+  gap: 24px;
+  justify-content: center;
+  margin-top: 12px;
+}
+
+.stat-item {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  font-size: 13px;
+  color: var(--el-text-color-regular);
+}
+
+.stat-icon {
+  font-size: 16px;
+}
+
+.section-progress-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding-top: 16px;
+  margin-top: 16px;
+  border-top: 1px solid var(--el-border-color-lighter);
+}
+
+.section-item {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 14px;
+  font-size: 13px;
+  background: var(--el-fill-color-light);
+  border-radius: 20px;
+  transition: all 0.3s ease;
+}
+
+.section-item.completed {
+  color: var(--el-color-success);
+  background: var(--el-color-success-light-9);
+  border: 1px solid var(--el-color-success-light-5);
+}
+
+.section-item.writing {
+  color: var(--el-color-primary);
+  background: var(--el-color-primary-light-9);
+  border: 1px solid var(--el-color-primary-light-5);
+  animation: section-pulse 2s ease-in-out infinite;
+}
+
+.section-item.evaluating {
+  color: var(--el-color-warning);
+  background: var(--el-color-warning-light-9);
+  border: 1px solid var(--el-color-warning-light-5);
+}
+
+.section-item.pending {
+  color: var(--el-text-color-placeholder);
+  border: 1px solid var(--el-border-color-lighter);
+}
+
+.section-index {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  font-size: 12px;
+  font-weight: 600;
+  background: var(--el-fill-color);
+  border-radius: 50%;
+}
+
+.section-item.completed .section-index {
+  color: white;
+  background: var(--el-color-success);
+}
+
+.section-item.writing .section-index {
+  color: white;
+  background: var(--el-color-primary);
+}
+
+.section-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.section-score {
+  font-size: 12px;
+  font-weight: 500;
+  opacity: 0.8;
+}
+
+.section-status-icon {
+  font-size: 14px;
+}
+
+@keyframes section-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgb(var(--el-color-primary-rgb), 0.2);
+  }
+
+  50% {
+    box-shadow: 0 0 0 6px rgb(var(--el-color-primary-rgb), 0);
+  }
+}
+
+/* ========== 执行中指示（简化版） ========== */
 .executing-bar {
   display: flex;
   gap: 8px;

@@ -12,6 +12,13 @@ export type IterationDetail = {
   feedback: string;
 };
 
+export type SectionProgress = {
+  index: number;
+  title?: string;
+  status: "pending" | "writing" | "evaluating" | "completed";
+  score?: number;
+};
+
 export type WritingRequest = {
   topic: string;
   requirements?: string;
@@ -46,6 +53,13 @@ export type WritingResponse = {
   currentSection?: number;
   antiAiScore?: number;
   consistencyScore?: number;
+  // 进度字段
+  progressPercent?: number;
+  stageLabel?: string;
+  stageDetail?: string;
+  estimatedRemainingMs?: number;
+  completedSections?: number;
+  sectionProgressList?: SectionProgress[];
 };
 
 export type ReflectionHistory = {
