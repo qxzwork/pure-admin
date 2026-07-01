@@ -9,7 +9,8 @@ import {
   Promotion,
   Check,
   Close,
-  Loading
+  Loading,
+  Picture
 } from "@element-plus/icons-vue";
 import { marked } from "marked";
 
@@ -43,6 +44,8 @@ type ChatMessage = {
   threadId?: string;
   tools?: ApprovalTool[];
   approvalStatus?: "pending" | "approved" | "rejected";
+  imageIds?: string[];
+  images?: { id: string; url: string }[];
 };
 
 // ==================== 状态 ====================
@@ -56,6 +59,9 @@ const conversationId = ref<string>("");
 const conversationList = ref<{ id: string; title: string }[]>([]);
 const sidebarCollapsed = ref(false);
 const textareaRef = ref<HTMLElement | null>(null);
+const uploadedImages = ref<{ id: string; url: string }[]>([]);
+const uploading = ref(false);
+const imageInputRef = ref<HTMLInputElement | null>(null);
 
 // ==================== 计算属性 ====================
 
@@ -112,6 +118,55 @@ async function postJSON<T>(url: string, body: unknown): Promise<T> {
 
 function getUserInitial(): string {
   return "U";
+}
+
+// ==================== 图片上传 ====================
+
+function triggerImagePicker() {
+  imageInputRef.value?.click();
+}
+
+async function handleImageSelect(event: Event) {
+  const target = event.target as HTMLInputElement;
+  const files = target.files;
+  if (!files || files.length === 0) return;
+
+  uploading.value = true;
+  for (const file of Array.from(files)) {
+    try {
+      const imageId = await uploadFile(file);
+      const url = URL.createObjectURL(file);
+      uploadedImages.value.push({ id: imageId, url });
+    } catch (e: any) {
+      message(e.message || "图片上传失败", { type: "error" });
+    }
+  }
+  uploading.value = false;
+  target.value = "";
+}
+
+async function uploadFile(file: File): Promise<string> {
+  const formData = new FormData();
+  formData.append("file", file);
+
+  const token = getToken()?.token;
+  const headers: Record<string, string> = {};
+  if (token) headers["Authorization"] = formatToken(token);
+
+  const resp = await fetch("/api/image/upload", {
+    method: "POST",
+    headers,
+    body: formData
+  });
+  const result = await resp.json();
+  if (result.code !== 200) throw new Error(result.message || "上传失败");
+  return result.data.imageId;
+}
+
+function removeImage(index: number) {
+  const img = uploadedImages.value[index];
+  if (img) URL.revokeObjectURL(img.url);
+  uploadedImages.value.splice(index, 1);
 }
 
 // ==================== 对话历史 ====================
@@ -211,13 +266,21 @@ function sendMessage() {
 
   inputText.value = "";
   const userTime = now();
+  const currentImages = uploadedImages.value.map(img => ({
+    id: img.id,
+    url: img.url
+  }));
+  const currentImageIds = uploadedImages.value.map(img => img.id);
   messages.value.push({
     role: "user",
     content: text,
     reasoning: "",
     done: true,
-    time: userTime
+    time: userTime,
+    imageIds: currentImageIds.length > 0 ? currentImageIds : undefined,
+    images: currentImages.length > 0 ? currentImages : undefined
   });
+  uploadedImages.value = [];
   saveMessage("user", text, userTime);
 
   const assistantMsg = reactive<ChatMessage>({
@@ -234,7 +297,11 @@ function sendMessage() {
   if (!conversationId.value) {
     conversationId.value = crypto.randomUUID();
   }
-  const body = { message: text, conversationId: conversationId.value };
+  const body: Record<string, any> = {
+    message: text,
+    conversationId: conversationId.value
+  };
+  if (currentImageIds.length > 0) body.imageIds = currentImageIds;
 
   fetch("/api/agent/chat/hitl", {
     method: "POST",
@@ -829,6 +896,15 @@ onMounted(async () => {
                   <div class="message-text whitespace-pre-wrap break-all">
                     {{ msg.content }}
                   </div>
+                  <div v-if="msg.images?.length" class="user-message-images">
+                    <div
+                      v-for="(img, iIdx) in msg.images"
+                      :key="iIdx"
+                      class="user-message-image"
+                    >
+                      <img :src="img.url" alt="图片" />
+                    </div>
+                  </div>
                   <div class="message-time">
                     {{ formatRelativeTime(msg.time) }}
                   </div>
@@ -920,33 +996,66 @@ onMounted(async () => {
       <!-- 输入区域 -->
       <div class="chat-input-area">
         <div class="input-container">
-          <textarea
-            ref="textareaRef"
-            v-model="inputText"
-            placeholder="输入问题，Enter 发送，Shift+Enter 换行"
-            :disabled="sending"
-            rows="1"
-            @keydown="handleKeydown"
-          />
-          <button
-            class="send-btn"
-            :class="{ active: inputText.trim() && !sending }"
-            :disabled="!inputText.trim() || sending"
-            @click="sendMessage"
-          >
-            <el-icon v-if="sending"><Loading /></el-icon>
-            <svg
-              v-else
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
+          <div class="input-toolbar">
+            <button
+              class="image-upload-btn"
+              :disabled="sending || uploading"
+              :title="uploading ? '上传中...' : '上传图片'"
+              @click="triggerImagePicker"
             >
-              <line x1="22" y1="2" x2="11" y2="13" />
-              <polygon points="22 2 15 22 11 13 2 9 22 2" />
-            </svg>
-          </button>
+              <el-icon v-if="uploading"><Loading /></el-icon>
+              <el-icon v-else><Picture /></el-icon>
+            </button>
+            <div v-if="uploadedImages.length" class="image-preview-strip">
+              <div
+                v-for="(img, idx) in uploadedImages"
+                :key="idx"
+                class="image-preview-item"
+              >
+                <img :src="img.url" alt="预览" />
+                <button class="image-remove-btn" @click="removeImage(idx)">
+                  <Close />
+                </button>
+              </div>
+            </div>
+          </div>
+          <div class="input-row">
+            <textarea
+              ref="textareaRef"
+              v-model="inputText"
+              placeholder="输入问题，Enter 发送，Shift+Enter 换行"
+              :disabled="sending"
+              rows="1"
+              @keydown="handleKeydown"
+            />
+            <button
+              class="send-btn"
+              :class="{ active: inputText.trim() && !sending }"
+              :disabled="!inputText.trim() || sending"
+              @click="sendMessage"
+            >
+              <el-icon v-if="sending"><Loading /></el-icon>
+              <svg
+                v-else
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+              >
+                <line x1="22" y1="2" x2="11" y2="13" />
+                <polygon points="22 2 15 22 11 13 2 9 22 2" />
+              </svg>
+            </button>
+          </div>
         </div>
+        <input
+          ref="imageInputRef"
+          type="file"
+          accept="image/*"
+          multiple
+          style="display: none"
+          @change="handleImageSelect"
+        />
         <div class="input-hint">
           <span>Enter 发送 · Shift+Enter 换行</span>
         </div>
@@ -1463,6 +1572,34 @@ onMounted(async () => {
   margin-right: 4px;
 }
 
+.user-message-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 8px;
+}
+
+.user-message-image {
+  width: 100px;
+  height: 100px;
+  overflow: hidden;
+  cursor: pointer;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 8px;
+  transition: transform 0.2s;
+}
+
+.user-message-image:hover {
+  transform: scale(1.05);
+}
+
+.user-message-image img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
 /* ==================== 打字指示器 ==================== */
 .typing-indicator {
   display: flex;
@@ -1718,11 +1855,8 @@ onMounted(async () => {
 }
 
 .input-container {
-  display: flex;
-  gap: 12px;
-  align-items: flex-end;
   max-width: var(--msg-max-width);
-  padding: 12px 16px;
+  padding: 8px 12px;
   margin: 0 auto;
   background: var(--el-fill-color-lighter);
   border: 1px solid var(--el-border-color);
@@ -1735,7 +1869,98 @@ onMounted(async () => {
   box-shadow: 0 0 0 3px var(--el-color-primary-light-9);
 }
 
-.input-container textarea {
+.input-toolbar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.image-upload-btn {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  color: var(--el-text-color-secondary);
+  cursor: pointer;
+  background: none;
+  border: none;
+  border-radius: 8px;
+  transition: all 0.2s;
+}
+
+.image-upload-btn:hover {
+  color: var(--el-color-primary);
+  background: var(--el-fill-color);
+}
+
+.image-upload-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.image-preview-strip {
+  display: flex;
+  flex: 1;
+  gap: 8px;
+  overflow-x: auto;
+  scroll-behavior: smooth;
+}
+
+.image-preview-item {
+  position: relative;
+  flex-shrink: 0;
+  width: 60px;
+  height: 60px;
+  overflow: hidden;
+  border: 1px solid var(--el-border-color);
+  border-radius: 8px;
+}
+
+.image-preview-item img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.image-remove-btn {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  color: white;
+  cursor: pointer;
+  background: rgb(0 0 0 / 50%);
+  border: none;
+  border-radius: 50%;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+.image-preview-item:hover .image-remove-btn {
+  opacity: 1;
+}
+
+.image-remove-btn svg {
+  width: 12px;
+  height: 12px;
+}
+
+.input-row {
+  display: flex;
+  gap: 12px;
+  align-items: flex-end;
+}
+
+.input-row textarea {
   flex: 1;
   min-height: 24px;
   max-height: 200px;
@@ -1748,11 +1973,11 @@ onMounted(async () => {
   border: none;
 }
 
-.input-container textarea::placeholder {
+.input-row textarea::placeholder {
   color: var(--el-text-color-secondary);
 }
 
-.input-container textarea:disabled {
+.input-row textarea:disabled {
   cursor: not-allowed;
   opacity: 0.6;
 }
