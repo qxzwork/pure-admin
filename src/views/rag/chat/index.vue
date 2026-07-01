@@ -159,17 +159,10 @@ function sendMessage() {
   const currentImageIds = uploadedImages.value.map(img => img.id);
   if ((!text && currentImageIds.length === 0) || sending.value) return;
 
-  const imageAppendix =
-    currentImageIds.length > 0
-      ? "\n\n" +
-        currentImageIds.map((id, i) => `图片${i + 1},ID:${id}`).join("\n")
-      : "";
-  const finalText = text + imageAppendix;
-
   inputText.value = "";
   messages.value.push({
     role: "user",
-    content: finalText,
+    content: text,
     steps: [],
     done: true,
     time: now(),
@@ -189,7 +182,7 @@ function sendMessage() {
   scrollToBottom();
 
   const body = JSON.stringify({
-    query: finalText,
+    query: text,
     conversationId: conversationId.value || undefined,
     sourceFilter: sourceFilter.value || undefined
   });
@@ -1672,119 +1665,132 @@ onMounted(() => {
 }
 
 .markdown-body {
-  :deep(pre) {
-    padding: 12px;
-    margin: 8px 0;
-    overflow-x: auto;
-    background: #f6f8fa;
-    border-radius: 6px;
-  }
+  font-size: 14px;
+  line-height: 1.7;
+  color: var(--el-text-color-primary);
+  overflow-wrap: break-word;
+}
 
-  :deep(code) {
-    font-family: "Fira Code", Consolas, Monaco, monospace;
-    font-size: 13px;
-  }
+:deep(.markdown-body p) {
+  margin: 0 0 12px;
+}
 
-  :deep(:not(pre) > code) {
-    padding: 2px 6px;
-    background: rgb(175 184 193 / 20%);
-    border-radius: 4px;
-  }
+:deep(.markdown-body p:last-child) {
+  margin-bottom: 0;
+}
 
-  :deep(p) {
-    margin: 0 0 8px;
-    line-height: 1.6;
+:deep(.markdown-body h1),
+:deep(.markdown-body h2),
+:deep(.markdown-body h3),
+:deep(.markdown-body h4) {
+  margin: 16px 0 8px;
+  font-weight: 600;
+  line-height: 1.4;
+}
 
-    &:last-child {
-      margin-bottom: 0;
-    }
-  }
+:deep(.markdown-body h1:first-child),
+:deep(.markdown-body h2:first-child),
+:deep(.markdown-body h3:first-child),
+:deep(.markdown-body h4:first-child) {
+  margin-top: 0;
+}
 
-  :deep(h1),
-  :deep(h2),
-  :deep(h3),
-  :deep(h4),
-  :deep(h5),
-  :deep(h6) {
-    margin: 12px 0 8px;
-    font-weight: 600;
-    line-height: 1.4;
+:deep(.markdown-body h1) {
+  font-size: 1.5em;
+}
 
-    &:first-child {
-      margin-top: 0;
-    }
-  }
+:deep(.markdown-body h2) {
+  font-size: 1.3em;
+}
 
-  :deep(h1) {
-    font-size: 1.5em;
-  }
+:deep(.markdown-body h3) {
+  font-size: 1.1em;
+}
 
-  :deep(h2) {
-    font-size: 1.3em;
-  }
+:deep(.markdown-body ul),
+:deep(.markdown-body ol) {
+  padding-left: 24px;
+  margin: 8px 0;
+}
 
-  :deep(h3) {
-    font-size: 1.1em;
-  }
+:deep(.markdown-body li) {
+  margin: 4px 0;
+  line-height: 1.6;
+}
 
-  :deep(ul),
-  :deep(ol) {
-    padding-left: 20px;
-    margin: 4px 0;
-  }
+:deep(.markdown-body code) {
+  padding: 2px 6px;
+  font-family: "Fira Code", Consolas, Monaco, monospace;
+  font-size: 13px;
+  background: var(--el-fill-color);
+  border-radius: 4px;
+}
 
-  :deep(li) {
-    margin: 2px 0;
-    line-height: 1.6;
-  }
+:deep(.markdown-body pre) {
+  padding: 16px;
+  margin: 12px 0;
+  overflow-x: auto;
+  background: var(--el-fill-color-dark);
+  border-radius: 8px;
+}
 
-  :deep(table) {
-    width: 100%;
-    margin: 8px 0;
-    border-collapse: collapse;
+:deep(.markdown-body pre code) {
+  padding: 0;
+  color: var(--el-text-color-primary);
+  background: none;
+}
 
-    th,
-    td {
-      padding: 6px 12px;
-      text-align: left;
-      border: 1px solid var(--el-border-color);
-    }
+:deep(.markdown-body table) {
+  width: 100%;
+  margin: 12px 0;
+  border-collapse: collapse;
+}
 
-    th {
-      font-weight: 600;
-      background: var(--el-fill-color-light);
-    }
+:deep(.markdown-body th),
+:deep(.markdown-body td) {
+  padding: 8px 12px;
+  text-align: left;
+  border: 1px solid var(--el-border-color);
+}
 
-    tr:hover {
-      background: var(--el-fill-color-lighter);
-    }
-  }
+:deep(.markdown-body th) {
+  font-weight: 600;
+  background: var(--el-fill-color-light);
+}
 
-  :deep(blockquote) {
-    padding-left: 12px;
-    margin: 8px 0;
-    color: var(--el-text-color-secondary);
-    border-left: 4px solid var(--el-color-primary);
-  }
+:deep(.markdown-body tr:hover) {
+  background: var(--el-fill-color-lighter);
+}
 
-  :deep(hr) {
-    margin: 12px 0;
-    border: none;
-    border-top: 1px solid var(--el-border-color);
-  }
+:deep(.markdown-body blockquote) {
+  padding: 8px 16px;
+  margin: 12px 0;
+  color: var(--el-text-color-regular);
+  background: var(--el-color-primary-light-9);
+  border-left: 4px solid var(--el-color-primary);
+}
 
-  :deep(img) {
-    max-width: 100%;
-    border-radius: 4px;
-  }
+:deep(.markdown-body hr) {
+  margin: 16px 0;
+  border: none;
+  border-top: 1px solid var(--el-border-color);
+}
 
-  :deep(a) {
-    color: var(--el-color-primary);
-    text-decoration: none;
+:deep(.markdown-body a) {
+  color: var(--el-color-primary);
+  text-decoration: none;
+}
 
-    &:hover {
-      text-decoration: underline;
-    }
-  }
+:deep(.markdown-body a:hover) {
+  text-decoration: underline;
+}
+
+:deep(.markdown-body strong) {
+  font-weight: 600;
+}
+
+:deep(.markdown-body img) {
+  max-width: 100%;
+  border-radius: 8px;
 }
 </style>
