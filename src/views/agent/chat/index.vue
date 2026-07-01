@@ -262,15 +262,15 @@ async function handleDeleteConversation(id: string) {
 
 function sendMessage() {
   const text = inputText.value.trim();
-  if (!text || sending.value) return;
-
-  inputText.value = "";
-  const userTime = now();
   const currentImages = uploadedImages.value.map(img => ({
     id: img.id,
     url: img.url
   }));
   const currentImageIds = uploadedImages.value.map(img => img.id);
+  if ((!text && currentImageIds.length === 0) || sending.value) return;
+
+  inputText.value = "";
+  const userTime = now();
   messages.value.push({
     role: "user",
     content: text,
@@ -1023,15 +1023,24 @@ onMounted(async () => {
             <textarea
               ref="textareaRef"
               v-model="inputText"
-              placeholder="输入问题，Enter 发送，Shift+Enter 换行"
+              :placeholder="
+                uploadedImages.length > 0
+                  ? '输入文字描述图片（可选）'
+                  : '输入问题，Enter 发送，Shift+Enter 换行'
+              "
               :disabled="sending"
               rows="1"
               @keydown="handleKeydown"
             />
             <button
               class="send-btn"
-              :class="{ active: inputText.trim() && !sending }"
-              :disabled="!inputText.trim() || sending"
+              :class="{
+                active:
+                  (inputText.trim() || uploadedImages.length > 0) && !sending
+              }"
+              :disabled="
+                (!inputText.trim() && uploadedImages.length === 0) || sending
+              "
               @click="sendMessage"
             >
               <el-icon v-if="sending"><Loading /></el-icon>
@@ -1057,7 +1066,11 @@ onMounted(async () => {
           @change="handleImageSelect"
         />
         <div class="input-hint">
-          <span>Enter 发送 · Shift+Enter 换行</span>
+          <span v-if="uploadedImages.length > 0"
+            >{{ uploadedImages.length }} 张图片待发送 · Enter 发送 · Shift+Enter
+            换行</span
+          >
+          <span v-else>Enter 发送 · Shift+Enter 换行</span>
         </div>
       </div>
     </main>
@@ -1913,45 +1926,63 @@ onMounted(async () => {
 .image-preview-item {
   position: relative;
   flex-shrink: 0;
-  width: 60px;
-  height: 60px;
+  width: 80px;
+  height: 80px;
   overflow: hidden;
-  border: 1px solid var(--el-border-color);
-  border-radius: 8px;
+  border: 2px solid var(--el-border-color);
+  border-radius: 10px;
+  transition: all 0.2s;
+}
+
+.image-preview-item:hover {
+  border-color: var(--el-color-primary);
+  box-shadow: 0 4px 12px rgb(0 0 0 / 12%);
+  transform: translateY(-1px);
 }
 
 .image-preview-item img {
   width: 100%;
   height: 100%;
   object-fit: cover;
+  transition: transform 0.2s;
+}
+
+.image-preview-item:hover img {
+  transform: scale(1.05);
 }
 
 .image-remove-btn {
   position: absolute;
-  top: 2px;
-  right: 2px;
+  top: 4px;
+  right: 4px;
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 18px;
-  height: 18px;
+  width: 22px;
+  height: 22px;
   padding: 0;
   color: white;
   cursor: pointer;
-  background: rgb(0 0 0 / 50%);
+  background: rgb(0 0 0 / 55%);
   border: none;
   border-radius: 50%;
   opacity: 0;
-  transition: opacity 0.2s;
+  backdrop-filter: blur(4px);
+  transition: all 0.2s;
 }
 
 .image-preview-item:hover .image-remove-btn {
   opacity: 1;
 }
 
+.image-remove-btn:hover {
+  background: var(--el-color-danger);
+  transform: scale(1.1);
+}
+
 .image-remove-btn svg {
-  width: 12px;
-  height: 12px;
+  width: 14px;
+  height: 14px;
 }
 
 .input-row {

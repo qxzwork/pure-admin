@@ -4,7 +4,7 @@ import { useRenderIcon } from "@/components/ReIcon/src/hooks";
 import { getToken, formatToken } from "@/utils/auth";
 import { message } from "@/utils/message";
 import { ElMessageBox } from "element-plus";
-import { Delete } from "@element-plus/icons-vue";
+import { Delete, Picture, Close, Loading } from "@element-plus/icons-vue";
 import { marked } from "marked";
 import { markedHighlight } from "marked-highlight";
 import hljs from "highlight.js";
@@ -65,6 +65,7 @@ type ChatMessage = {
   steps: ThinkingStep[];
   done: boolean;
   time: string;
+  images?: { id: string; url: string }[];
 };
 
 const inputText = ref("");
@@ -80,6 +81,9 @@ const sourceOptions = ref<string[]>([]);
 const conversationId = ref("");
 const conversationList = ref<{ id: string; title: string }[]>([]);
 const chatContainerRef = ref<HTMLElement | null>(null);
+const uploadedImages = ref<{ id: string; url: string }[]>([]);
+const uploading = ref(false);
+const imageInputRef = ref<HTMLInputElement | null>(null);
 
 function now(): string {
   return new Date().toLocaleTimeString("zh-CN", {
@@ -97,18 +101,81 @@ function scrollToBottom() {
   });
 }
 
+// ==================== 图片上传 ====================
+
+function triggerImagePicker() {
+  imageInputRef.value?.click();
+}
+
+async function handleImageSelect(event: Event) {
+  const target = event.target as HTMLInputElement;
+  const files = target.files;
+  if (!files || files.length === 0) return;
+
+  uploading.value = true;
+  for (const file of Array.from(files)) {
+    try {
+      const imageId = await uploadFile(file);
+      const url = URL.createObjectURL(file);
+      uploadedImages.value.push({ id: imageId, url });
+    } catch (e: any) {
+      message(e.message || "图片上传失败", { type: "error" });
+    }
+  }
+  uploading.value = false;
+  target.value = "";
+}
+
+async function uploadFile(file: File): Promise<string> {
+  const formData = new FormData();
+  formData.append("file", file);
+
+  const token = getToken()?.token;
+  const headers: Record<string, string> = {};
+  if (token) headers["Authorization"] = formatToken(token);
+
+  const resp = await fetch("/api/image/upload", {
+    method: "POST",
+    headers,
+    body: formData
+  });
+  const result = await resp.json();
+  if (result.code !== 200) throw new Error(result.message || "上传失败");
+  return result.data.imageId;
+}
+
+function removeImage(index: number) {
+  const img = uploadedImages.value[index];
+  if (img) URL.revokeObjectURL(img.url);
+  uploadedImages.value.splice(index, 1);
+}
+
 function sendMessage() {
   const text = inputText.value.trim();
-  if (!text || sending.value) return;
+  const currentImages = uploadedImages.value.map(img => ({
+    id: img.id,
+    url: img.url
+  }));
+  const currentImageIds = uploadedImages.value.map(img => img.id);
+  if ((!text && currentImageIds.length === 0) || sending.value) return;
+
+  const imageAppendix =
+    currentImageIds.length > 0
+      ? "\n\n" +
+        currentImageIds.map((id, i) => `图片${i + 1},ID:${id}`).join("\n")
+      : "";
+  const finalText = text + imageAppendix;
 
   inputText.value = "";
   messages.value.push({
     role: "user",
-    content: text,
+    content: finalText,
     steps: [],
     done: true,
-    time: now()
+    time: now(),
+    images: currentImages.length > 0 ? currentImages : undefined
   });
+  uploadedImages.value = [];
 
   const assistantMsg = reactive<ChatMessage>({
     role: "assistant",
@@ -122,7 +189,7 @@ function sendMessage() {
   scrollToBottom();
 
   const body = JSON.stringify({
-    query: text,
+    query: finalText,
     conversationId: conversationId.value || undefined,
     sourceFilter: sourceFilter.value || undefined
   });
@@ -514,6 +581,15 @@ onMounted(() => {
                   <div class="message-text whitespace-pre-wrap break-all">
                     {{ msg.content }}
                   </div>
+                  <div v-if="msg.images?.length" class="user-message-images">
+                    <div
+                      v-for="(img, iIdx) in msg.images"
+                      :key="iIdx"
+                      class="user-message-image"
+                    >
+                      <img :src="img.url" alt="图片" />
+                    </div>
+                  </div>
                   <div class="message-time">
                     {{ msg.time }}
                   </div>
@@ -747,27 +823,69 @@ onMounted(() => {
       <!-- 输入区 -->
       <div class="rag-input-area">
         <div class="rag-chat-input">
-          <el-input
-            v-model="inputText"
-            type="textarea"
-            :rows="1"
-            autosize
-            placeholder="输入问题，Enter 发送，Shift+Enter 换行"
-            class="flex-1"
-            :disabled="sending"
-            @keydown="handleKeydown"
-          />
-          <el-button
-            type="primary"
-            :icon="useRenderIcon('ri/send-plane-fill')"
-            :loading="sending"
-            @click="sendMessage"
-          >
-            发送
-          </el-button>
+          <div class="input-toolbar">
+            <button
+              class="image-upload-btn"
+              :disabled="sending || uploading"
+              :title="uploading ? '上传中...' : '上传图片'"
+              @click="triggerImagePicker"
+            >
+              <el-icon v-if="uploading"><Loading /></el-icon>
+              <el-icon v-else><Picture /></el-icon>
+            </button>
+            <div v-if="uploadedImages.length" class="image-preview-strip">
+              <div
+                v-for="(img, idx) in uploadedImages"
+                :key="idx"
+                class="image-preview-item"
+              >
+                <img :src="img.url" alt="预览" />
+                <button class="image-remove-btn" @click="removeImage(idx)">
+                  <Close />
+                </button>
+              </div>
+            </div>
+          </div>
+          <div class="input-row">
+            <el-input
+              v-model="inputText"
+              type="textarea"
+              :rows="1"
+              autosize
+              :placeholder="
+                uploadedImages.length > 0
+                  ? '输入文字描述图片（可选）'
+                  : '输入问题，Enter 发送，Shift+Enter 换行'
+              "
+              class="rag-textarea"
+              :disabled="sending"
+              @keydown="handleKeydown"
+            />
+            <el-button
+              type="primary"
+              :icon="useRenderIcon('ri/send-plane-fill')"
+              :loading="sending"
+              :disabled="!inputText.trim() && uploadedImages.length === 0"
+              @click="sendMessage"
+            >
+              发送
+            </el-button>
+          </div>
         </div>
+        <input
+          ref="imageInputRef"
+          type="file"
+          accept="image/*"
+          multiple
+          style="display: none"
+          @change="handleImageSelect"
+        />
         <div class="input-hint">
-          <span>Enter 发送 · Shift+Enter 换行</span>
+          <span v-if="uploadedImages.length > 0"
+            >{{ uploadedImages.length }} 张图片待发送 · Enter 发送 · Shift+Enter
+            换行</span
+          >
+          <span v-else>Enter 发送 · Shift+Enter 换行</span>
         </div>
       </div>
     </div>
@@ -969,11 +1087,10 @@ onMounted(() => {
 
 .rag-chat-input {
   display: flex;
-  flex-shrink: 0;
-  gap: 12px;
-  align-items: flex-end;
+  flex-direction: column;
+  gap: 4px;
   max-width: 768px;
-  padding: 12px 16px;
+  padding: 8px 12px;
   margin: 0 auto;
   background: var(--el-fill-color-lighter);
   border: 1px solid var(--el-border-color);
@@ -984,6 +1101,118 @@ onMounted(() => {
 .rag-chat-input:focus-within {
   border-color: var(--el-color-primary);
   box-shadow: 0 0 0 3px var(--el-color-primary-light-9);
+}
+
+.input-toolbar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.image-upload-btn {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  color: var(--el-text-color-secondary);
+  cursor: pointer;
+  background: none;
+  border: none;
+  border-radius: 8px;
+  transition: all 0.2s;
+}
+
+.image-upload-btn:hover {
+  color: var(--el-color-primary);
+  background: var(--el-fill-color);
+}
+
+.image-upload-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.image-preview-strip {
+  display: flex;
+  flex: 1;
+  gap: 8px;
+  overflow-x: auto;
+  scroll-behavior: smooth;
+}
+
+.image-preview-item {
+  position: relative;
+  flex-shrink: 0;
+  width: 80px;
+  height: 80px;
+  overflow: hidden;
+  border: 2px solid var(--el-border-color);
+  border-radius: 10px;
+  transition: all 0.2s;
+}
+
+.image-preview-item:hover {
+  border-color: var(--el-color-primary);
+  box-shadow: 0 4px 12px rgb(0 0 0 / 12%);
+  transform: translateY(-1px);
+}
+
+.image-preview-item img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: transform 0.2s;
+}
+
+.image-preview-item:hover img {
+  transform: scale(1.05);
+}
+
+.image-remove-btn {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  color: white;
+  cursor: pointer;
+  background: rgb(0 0 0 / 55%);
+  border: none;
+  border-radius: 50%;
+  opacity: 0;
+  backdrop-filter: blur(4px);
+  transition: all 0.2s;
+}
+
+.image-preview-item:hover .image-remove-btn {
+  opacity: 1;
+}
+
+.image-remove-btn:hover {
+  background: var(--el-color-danger);
+  transform: scale(1.1);
+}
+
+.image-remove-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+.input-row {
+  display: flex;
+  gap: 12px;
+  align-items: flex-end;
+}
+
+.input-row .rag-textarea {
+  flex: 1;
 }
 
 /* 输入区域容器 */
@@ -1101,6 +1330,34 @@ onMounted(() => {
 
 .user-message-content .message-time {
   margin-right: 4px;
+}
+
+.user-message-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 8px;
+}
+
+.user-message-image {
+  width: 100px;
+  height: 100px;
+  overflow: hidden;
+  cursor: pointer;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 8px;
+  transition: transform 0.2s;
+}
+
+.user-message-image:hover {
+  transform: scale(1.05);
+}
+
+.user-message-image img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 /* ==================== 打字指示器 ==================== */
