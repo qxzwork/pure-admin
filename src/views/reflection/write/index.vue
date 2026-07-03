@@ -14,7 +14,10 @@ import type {
   ReflectionHistory,
   SectionProgress
 } from "@/api/reflection";
-import { getAllReflectionHistory } from "@/api/reflection";
+import {
+  getAllReflectionHistory,
+  deleteReflectionHistory
+} from "@/api/reflection";
 
 defineOptions({ name: "ReflectionWrite" });
 
@@ -114,6 +117,7 @@ const result = reactive<WritingResponse>({
 
 const historyList = ref<
   {
+    id: number;
     conversationId: string;
     topic: string;
     score?: number;
@@ -379,6 +383,7 @@ async function loadAllHistory() {
     const res = await getAllReflectionHistory();
     if (res.code === 200 && res.data?.length) {
       historyList.value = res.data.map(item => ({
+        id: item.id,
         conversationId: item.conversationId,
         topic: item.topic,
         score: item.score,
@@ -406,6 +411,7 @@ async function loadHistory() {
       );
       if (!exists) {
         historyList.value.unshift({
+          id: item.id,
           conversationId: item.conversationId,
           topic: item.topic,
           score: item.score,
@@ -450,22 +456,20 @@ async function loadHistoryDetail(conversationId: string) {
   }
 }
 
-async function handleDeleteHistory(conversationId: string) {
+async function handleDeleteHistory(id: number) {
   try {
     await ElMessageBox.confirm("确定删除该写作记录？", "警告", {
       confirmButtonText: "确定",
       cancelButtonText: "取消",
       type: "warning"
     });
-    historyList.value = historyList.value.filter(
-      h => h.conversationId !== conversationId
-    );
-    if (result.conversationId === conversationId) {
-      resetResult();
-    }
+
+    await deleteReflectionHistory(id);
+
+    historyList.value = historyList.value.filter(h => h.id !== id);
     message("删除成功", { type: "success" });
   } catch {
-    // cancelled
+    // cancelled or failed
   }
 }
 
@@ -599,7 +603,7 @@ onMounted(() => {
             <button
               class="hist-delete"
               title="删除"
-              @click.stop="handleDeleteHistory(item.conversationId)"
+              @click.stop="handleDeleteHistory(item.id)"
             >
               <Delete />
             </button>

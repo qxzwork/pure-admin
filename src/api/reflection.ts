@@ -112,3 +112,10 @@ export const getAllReflectionHistory = () => {
     "/api/reflection/history"
   );
 };
+
+export const deleteReflectionHistory = (id: number) => {
+  return http.request<SimpleResult<void>>(
+    "delete",
+    `/api/reflection/history/${id}`
+  );
+};
