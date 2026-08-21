@@ -1,5 +1,12 @@
 import { http } from "@/utils/http";
 
+/** 统一响应包装 */
+type SimpleResult<T> = {
+  code: number;
+  message: string;
+  data: T;
+};
+
 /** Agent Trace 记录 */
 export type AgentTrace = {
   id: string;
@@ -90,7 +97,7 @@ export const getSessions = (params?: {
   endTime?: string;
   status?: string;
 }) => {
-  return http.request<SessionGroupPageResponse>(
+  return http.request<SimpleResult<SessionGroupPageResponse>>(
     "get",
     "/api/observability/sessions",
     { params }
@@ -110,7 +117,7 @@ export const getTraceList = (params: {
 
 /** 获取 Trace 详情（含 Span 列表） */
 export const getTraceDetail = (traceId: string) => {
-  return http.request<{ trace: AgentTrace; spans: AgentSpan[] }>(
+  return http.request<SimpleResult<{ trace: AgentTrace; spans: AgentSpan[] }>>(
     "get",
     `/api/observability/traces/${traceId}`
   );
@@ -125,5 +132,8 @@ export const getRecentTraces = (limit?: number) => {
 
 /** 获取统计数据 */
 export const getStatistics = () => {
-  return http.request<TraceStatistics>("get", "/api/observability/statistics");
+  return http.request<SimpleResult<TraceStatistics>>(
+    "get",
+    "/api/observability/statistics"
+  );
 };

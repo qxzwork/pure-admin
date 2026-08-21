@@ -36,10 +36,14 @@ export function useTrace() {
         size: pagination.value.pageSize,
         status: statusFilter.value || undefined
       });
-      sessionList.value = res?.content ?? [];
-      pagination.value.total = Number(res?.total ?? 0);
-      pagination.value.pageSize = Number(res?.size ?? 20);
-      pagination.value.currentPage = Number(res?.current ?? 1);
+      if (res?.code === 200) {
+        sessionList.value = res?.data?.content ?? [];
+        pagination.value.total = Number(res?.data?.total ?? 0);
+        pagination.value.pageSize = Number(res?.data?.size ?? 20);
+        pagination.value.currentPage = Number(res?.data?.current ?? 1);
+      } else {
+        sessionList.value = [];
+      }
     } catch {
       sessionList.value = [];
     } finally {
@@ -51,7 +55,7 @@ export function useTrace() {
     statsLoading.value = true;
     try {
       const res = await getStatistics();
-      stats.value = res ?? null;
+      stats.value = res?.code === 200 ? (res?.data ?? null) : null;
     } catch {
       stats.value = null;
     } finally {
@@ -67,7 +71,7 @@ export function useTrace() {
     detailVisible.value = true;
     try {
       const res = await getTraceDetail(row.id);
-      detailSpans.value = res?.spans ?? [];
+      detailSpans.value = res?.data?.spans ?? [];
     } catch {
       detailSpans.value = [];
     } finally {

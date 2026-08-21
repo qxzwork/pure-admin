@@ -1,5 +1,12 @@
 <script setup lang="ts">
-import { ref, reactive, computed, onBeforeUnmount, onMounted } from "vue";
+import {
+  ref,
+  reactive,
+  computed,
+  onBeforeUnmount,
+  onMounted,
+  nextTick
+} from "vue";
 import { useRouter } from "vue-router";
 import { useRenderIcon } from "@/components/ReIcon/src/hooks";
 import { message } from "@/utils/message";
@@ -16,6 +23,12 @@ const historyList = ref<ReflectionHistory[]>([]);
 const selectedHistoryId = ref<number | undefined>(undefined);
 const generating = ref(false);
 const searchQuery = ref("");
+const currentStep = ref<"select" | "generating" | "completed" | "error">(
+  "select"
+);
+const isTransitioning = ref(false);
+const currentPage = ref(1);
+const pageSize = ref(10);
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 
 const filteredHistoryList = computed(() => {
@@ -24,6 +37,12 @@ const filteredHistoryList = computed(() => {
   return historyList.value.filter(item =>
     item.topic.toLowerCase().includes(query)
   );
+});
+
+const paginatedList = computed(() => {
+  const start = (currentPage.value - 1) * pageSize.value;
+  const end = start + pageSize.value;
+  return filteredHistoryList.value.slice(start, end);
 });
 
 const result = reactive<AudioGenerateResponse>({
@@ -128,10 +147,12 @@ async function pollStatus(recordId: number) {
       if (res.data.status === "completed") {
         stopPolling();
         generating.value = false;
+        currentStep.value = "completed";
         message("音频生成完成", { type: "success" });
       } else if (res.data.status === "failed") {
         stopPolling();
         generating.value = false;
+        currentStep.value = "error";
         message(res.data.errorMessage || "生成失败", { type: "error" });
       }
     }
@@ -140,11 +161,23 @@ async function pollStatus(recordId: number) {
   }
 }
 
+function tableRowClassName({ row }: { row: ReflectionHistory }) {
+  if (selectedHistoryId.value === row.id) {
+    return "current-row";
+  }
+  return "";
+}
+
+function handleRowClick(row: ReflectionHistory) {
+  selectedHistoryId.value = row.id;
+}
+
 async function handleGenerate() {
   if (!selectedHistoryId.value || generating.value) return;
 
   resetResult();
   generating.value = true;
+  currentStep.value = "generating";
   result.status = "generating";
   result.progressPercent = 0;
   result.progressDetail = "正在提交任务...";
@@ -159,12 +192,14 @@ async function handleGenerate() {
 
       if (res.data.status === "completed") {
         generating.value = false;
+        currentStep.value = "completed";
         message("音频生成完成", { type: "success" });
         return;
       }
 
       if (res.data.status === "failed") {
         generating.value = false;
+        currentStep.value = "error";
         message(res.data.errorMessage || "生成失败", { type: "error" });
         return;
       }
@@ -174,16 +209,38 @@ async function handleGenerate() {
       }
     } else {
       generating.value = false;
+      currentStep.value = "error";
       result.status = "failed";
       result.errorMessage = res.message || "提交失败";
       message(res.message || "提交失败", { type: "error" });
     }
   } catch {
     generating.value = false;
+    currentStep.value = "error";
     result.status = "failed";
     result.errorMessage = "请求失败，请稍后重试";
     message("请求失败，请稍后重试", { type: "error" });
   }
+}
+
+function handleBack() {
+  isTransitioning.value = true;
+  setTimeout(() => {
+    resetResult();
+    generating.value = false;
+    currentStep.value = "select";
+    isTransitioning.value = false;
+  }, 500);
+}
+
+function handleRetry() {
+  isTransitioning.value = true;
+  setTimeout(() => {
+    resetResult();
+    generating.value = false;
+    currentStep.value = "select";
+    isTransitioning.value = false;
+  }, 500);
 }
 
 function getSelectedTopic(): string {
@@ -202,181 +259,261 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="audio-container">
-    <div class="audio-main">
-      <!-- 欢迎态 -->
-      <div v-if="!generating && !result.status" class="welcome-view">
-        <div class="welcome-content">
-          <div class="welcome-icon">
-            <svg
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="1.5"
-            >
-              <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
-              <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
-              <line x1="12" y1="19" x2="12" y2="23" />
-              <line x1="8" y1="23" x2="16" y2="23" />
-            </svg>
-          </div>
-          <h1 class="welcome-title">有声版生成</h1>
-          <p class="welcome-desc">
-            选择一篇反思写作作品，AI 将为其生成有声版音频
-          </p>
-          <el-button
-            text
-            :icon="useRenderIcon('ri-history-line')"
-            style="margin-bottom: 24px"
-            @click="router.push('/audio/list')"
-          >
-            查看生成记录
-          </el-button>
+  <div
+    class="studio-container"
+    :class="{ 'is-transitioning': isTransitioning }"
+  >
+    <!-- 粒子背景 -->
+    <div class="particles-bg">
+      <div v-for="i in 50" :key="i" class="particle" :style="{ '--i': i }" />
+    </div>
 
-          <div class="welcome-form">
-            <!-- 搜索框 -->
-            <div class="search-box">
-              <el-input
+    <!-- 光晕效果 -->
+    <div class="glow-orb glow-orb-1" />
+    <div class="glow-orb glow-orb-2" />
+    <div class="glow-orb glow-orb-3" />
+
+    <!-- 主内容区 -->
+    <div class="studio-main">
+      <!-- 选择态 -->
+      <transition name="fade-up" mode="out-in">
+        <div v-if="currentStep === 'select'" key="select" class="select-view">
+          <div class="select-header">
+            <h2 class="select-title">选择文章</h2>
+            <div class="search-wrapper">
+              <input
                 v-model="searchQuery"
-                placeholder="搜索文章标题..."
-                size="large"
-                clearable
-                :prefix-icon="useRenderIcon('ri/search-line')"
+                type="text"
+                class="search-input"
+                placeholder="搜索文章..."
+              />
+              <svg
+                class="search-icon"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                width="18"
+                height="18"
+              >
+                <circle cx="11" cy="11" r="8" />
+                <line x1="21" y1="21" x2="16.65" y2="16.65" />
+              </svg>
+            </div>
+          </div>
+
+          <div class="table-container">
+            <el-table
+              :data="paginatedList"
+              style="width: 100%"
+              :row-class-name="tableRowClassName"
+              highlight-current-row
+              @row-click="handleRowClick"
+            >
+              <el-table-column
+                prop="topic"
+                label="标题"
+                min-width="200"
+                show-overflow-tooltip
+              >
+                <template #default="{ row }">
+                  <span class="topic-text">{{ row.topic }}</span>
+                </template>
+              </el-table-column>
+              <el-table-column label="类型" width="80" align="center">
+                <template #default="{ row }">
+                  <span
+                    :class="[
+                      'type-tag',
+                      row.contentType === 'novel'
+                        ? 'type-novel'
+                        : 'type-article'
+                    ]"
+                  >
+                    {{ row.contentType === "novel" ? "小说" : "文章" }}
+                  </span>
+                </template>
+              </el-table-column>
+              <el-table-column label="状态" width="100" align="center">
+                <template #default="{ row }">
+                  <span class="status-badge">
+                    <span
+                      :class="[
+                        'status-dot',
+                        `status-${getStatusType(row.status) || 'default'}`
+                      ]"
+                    />
+                    <span class="status-text">{{
+                      getStatusText(row.status) || "未知"
+                    }}</span>
+                  </span>
+                </template>
+              </el-table-column>
+              <el-table-column label="分数" width="80" align="center">
+                <template #default="{ row }">
+                  <span class="score-text">{{ row.score || "--" }}</span>
+                </template>
+              </el-table-column>
+              <el-table-column label="时间" width="110" align="center">
+                <template #default="{ row }">
+                  <span class="date-text">{{
+                    formatDate(row.createTime)
+                  }}</span>
+                </template>
+              </el-table-column>
+              <el-table-column
+                label="操作"
+                width="80"
+                align="center"
+                fixed="right"
+              >
+                <template #default="{ row }">
+                  <button
+                    class="play-btn"
+                    @click.stop="
+                      selectedHistoryId = row.id;
+                      handleGenerate();
+                    "
+                  >
+                    <svg
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      width="16"
+                      height="16"
+                    >
+                      <polygon points="5 3 19 12 5 21 5 3" />
+                    </svg>
+                  </button>
+                </template>
+              </el-table-column>
+            </el-table>
+
+            <!-- 分页 -->
+            <div class="pagination-wrapper">
+              <span class="pagination-info"
+                >共 {{ filteredHistoryList.length }} 篇</span
+              >
+              <el-pagination
+                v-model:current-page="currentPage"
+                v-model:page-size="pageSize"
+                :page-sizes="[10, 20, 50]"
+                :total="filteredHistoryList.length"
+                layout="sizes, prev, pager, next"
+                small
               />
             </div>
+          </div>
 
-            <!-- 卡片网格 -->
-            <div class="card-grid">
-              <div
-                v-for="item in filteredHistoryList"
-                :key="item.id"
-                class="history-card"
-                :class="{ 'card-selected': selectedHistoryId === item.id }"
-                @click="selectedHistoryId = item.id"
-              >
-                <div class="card-title" :title="item.topic">
-                  {{ item.topic }}
-                </div>
-                <div class="card-tags">
-                  <el-tag
-                    size="small"
-                    :type="item.contentType === 'novel' ? '' : 'info'"
-                  >
-                    {{ item.contentType === "novel" ? "小说" : "文章" }}
-                  </el-tag>
-                  <el-tag
-                    v-if="item.status !== undefined"
-                    size="small"
-                    :type="getStatusType(item.status)"
-                  >
-                    {{ getStatusText(item.status) }}
-                  </el-tag>
-                  <span v-if="item.score" class="card-score"
-                    >{{ item.score }}分</span
-                  >
-                </div>
-                <div class="card-meta">
-                  <span v-if="item.createTime">{{
-                    formatDate(item.createTime)
-                  }}</span>
-                  <span v-if="item.totalSections"
-                    >{{ item.totalSections }}章</span
-                  >
-                </div>
-              </div>
-            </div>
-
-            <!-- 空状态 -->
-            <div
-              v-if="filteredHistoryList.length === 0 && historyList.length > 0"
-              class="empty-search"
-            >
-              <el-empty description="未找到匹配的文章" :image-size="80" />
-            </div>
-
-            <!-- 生成按钮 -->
-            <el-button
-              type="primary"
-              size="large"
-              :icon="useRenderIcon('ri/play-circle-line')"
+          <div class="select-footer">
+            <button
+              class="generate-btn"
               :disabled="!selectedHistoryId"
-              :loading="generating"
-              style="width: 100%; margin-top: 16px"
               @click="handleGenerate"
             >
-              生成有声版
-            </el-button>
-          </div>
-
-          <div v-if="historyList.length === 0" class="empty-hint">
-            <el-alert
-              title="暂无可用于生成音频的写作作品"
-              description="请先完成至少一篇反思写作（状态为达标或超限兜底），然后再来生成有声版。"
-              type="info"
-              show-icon
-              :closable="false"
-            />
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                width="20"
+                height="20"
+              >
+                <polygon points="5 3 19 12 5 21 5 3" />
+              </svg>
+              <span>生成音频</span>
+              <span class="btn-glow" />
+            </button>
           </div>
         </div>
-      </div>
+      </transition>
 
-      <!-- 生成中 / 结果态 -->
-      <div v-else class="result-view">
-        <div class="result-content">
-          <!-- 顶部信息 -->
-          <div class="result-header">
-            <h2 class="result-title">{{ getSelectedTopic() }}</h2>
-            <el-button
-              text
-              :icon="useRenderIcon('ri/arrow-go-back-line')"
-              @click="
-                resetResult();
-                generating = false;
-              "
-            >
-              返回
-            </el-button>
-          </div>
-
-          <!-- 进度区域 -->
-          <div
-            v-if="generating || result.status === 'generating'"
-            class="progress-section"
-          >
-            <div class="progress-card">
-              <div class="progress-icon">
-                <svg
-                  viewBox="0 0 24 24"
+      <!-- 生成态 -->
+      <transition name="fade-up" mode="out-in">
+        <div
+          v-if="currentStep === 'generating'"
+          key="generating"
+          class="generating-view"
+        >
+          <div class="generating-content">
+            <div class="progress-ring-container">
+              <svg class="progress-ring" viewBox="0 0 200 200">
+                <defs>
+                  <linearGradient
+                    id="progressGradient"
+                    x1="0%"
+                    y1="0%"
+                    x2="100%"
+                    y2="100%"
+                  >
+                    <stop offset="0%" stop-color="#3b82f6" />
+                    <stop offset="100%" stop-color="#8b5cf6" />
+                  </linearGradient>
+                </defs>
+                <circle
+                  class="progress-ring-bg"
+                  cx="100"
+                  cy="100"
+                  r="90"
                   fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-                  class="spinning"
-                >
-                  <path d="M21 12a9 9 0 1 1-6.219-8.56" />
-                </svg>
+                  stroke="rgba(255,255,255,0.1)"
+                  stroke-width="8"
+                />
+                <circle
+                  class="progress-ring-fill"
+                  cx="100"
+                  cy="100"
+                  r="90"
+                  fill="none"
+                  stroke="url(#progressGradient)"
+                  stroke-width="8"
+                  stroke-linecap="round"
+                  :stroke-dasharray="565.48"
+                  :stroke-dashoffset="
+                    565.48 * (1 - (result.progressPercent || 0) / 100)
+                  "
+                />
+              </svg>
+              <div class="progress-percent">
+                {{ result.progressPercent || 0 }}%
               </div>
-              <div class="progress-info">
-                <div class="progress-title">正在生成有声版</div>
-                <div class="progress-detail">
-                  {{ result.progressDetail || "处理中..." }}
-                </div>
-              </div>
-              <el-progress
-                :percentage="result.progressPercent || 0"
-                :stroke-width="10"
-                striped
-                :striped-flow="true"
-                style="width: 100%; margin-top: 20px"
+            </div>
+
+            <!-- 声波动画 -->
+            <div class="sound-wave">
+              <div
+                v-for="i in 20"
+                :key="i"
+                class="wave-bar"
+                :style="{ '--i': i }"
               />
             </div>
-          </div>
 
-          <!-- 完成区域 -->
-          <div
-            v-if="result.status === 'completed' && result.audioUrl"
-            class="completed-section"
-          >
-            <div class="audio-player-card">
+            <div class="generating-info">
+              <h2 class="generating-title">正在生成音频</h2>
+              <p class="generating-detail">
+                {{ result.progressDetail || "处理中..." }}
+              </p>
+            </div>
+
+            <div class="generating-article">
+              <span class="article-label">正在处理：</span>
+              <span class="article-title">{{ getSelectedTopic() }}</span>
+            </div>
+          </div>
+        </div>
+      </transition>
+
+      <!-- 完成态 -->
+      <transition name="fade-up" mode="out-in">
+        <div
+          v-if="currentStep === 'completed'"
+          key="completed"
+          class="completed-view"
+        >
+          <div class="completed-content">
+            <div class="player-card">
               <div class="player-header">
                 <div class="player-icon">
                   <svg
@@ -389,20 +526,34 @@ onBeforeUnmount(() => {
                   </svg>
                 </div>
                 <div class="player-info">
-                  <div class="player-title">有声版音频</div>
-                  <div class="player-subtitle">生成完成</div>
+                  <h3 class="player-title">生成完成</h3>
+                  <p class="player-subtitle">{{ getSelectedTopic() }}</p>
                 </div>
+                <button class="back-to-select" @click="handleBack">
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    width="18"
+                    height="18"
+                  >
+                    <path d="M19 12H5M12 19l-7-7 7-7" />
+                  </svg>
+                  返回
+                </button>
               </div>
 
-              <audio
-                controls
-                :src="result.audioUrl"
-                style="width: 100%; margin-top: 16px"
-              >
+              <!-- 波形可视化 -->
+              <div class="waveform-container">
+                <canvas ref="waveformCanvas" class="waveform-canvas" />
+              </div>
+
+              <audio controls :src="result.audioUrl" class="audio-player">
                 您的浏览器不支持音频播放
               </audio>
 
-              <div class="audio-meta">
+              <div class="player-meta">
                 <div class="meta-item">
                   <span class="meta-label">时长</span>
                   <span class="meta-value">{{
@@ -423,359 +574,722 @@ onBeforeUnmount(() => {
                 </div>
               </div>
 
-              <el-button
-                type="primary"
-                :icon="useRenderIcon('ri/download-line')"
-                style="width: 100%; margin-top: 16px"
-                @click="window.open(result.audioUrl)"
-              >
-                下载音频
-              </el-button>
+              <div class="player-actions">
+                <button
+                  class="download-btn"
+                  @click="window.open(result.audioUrl)"
+                >
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    width="20"
+                    height="20"
+                  >
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                    <polyline points="7 10 12 15 17 10" />
+                    <line x1="12" y1="15" x2="12" y2="3" />
+                  </svg>
+                  <span>下载音频</span>
+                  <span class="btn-glow" />
+                </button>
+              </div>
             </div>
           </div>
+        </div>
+      </transition>
 
-          <!-- 错误区域 -->
-          <div v-if="result.status === 'failed'" class="error-section">
-            <el-alert
-              :title="result.errorMessage || '生成失败'"
-              type="error"
-              show-icon
-              :closable="false"
-            />
-            <el-button
-              type="primary"
-              style="margin-top: 16px"
-              @click="
-                resetResult();
-                generating = false;
-              "
-            >
-              重新选择
-            </el-button>
+      <!-- 错误态 -->
+      <transition name="fade-up" mode="out-in">
+        <div v-if="currentStep === 'error'" key="error" class="error-view">
+          <div class="error-content">
+            <div class="error-icon">
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+              >
+                <circle cx="12" cy="12" r="10" />
+                <line x1="15" y1="9" x2="9" y2="15" />
+                <line x1="9" y1="9" x2="15" y2="15" />
+              </svg>
+            </div>
+            <h2 class="error-title">生成失败</h2>
+            <p class="error-message">
+              {{ result.errorMessage || "发生未知错误" }}
+            </p>
+            <div class="error-actions">
+              <button class="retry-btn" @click="handleRetry">
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  width="20"
+                  height="20"
+                >
+                  <polyline points="23 4 23 10 17 10" />
+                  <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+                </svg>
+                <span>重新选择</span>
+                <span class="btn-glow" />
+              </button>
+            </div>
           </div>
         </div>
-      </div>
+      </transition>
     </div>
   </div>
 </template>
 
 <style scoped>
-.audio-container {
+/* ========== 容器 ========== */
+.studio-container {
   position: fixed;
   inset: 82px 0 0 210px;
   display: flex;
   overflow: hidden;
-  background: var(--el-bg-color);
+  font-family:
+    Inter,
+    -apple-system,
+    BlinkMacSystemFont,
+    sans-serif;
+  background: linear-gradient(135deg, #0a0a1a 0%, #1a0a2e 50%, #0a1a2e 100%);
 }
 
-.audio-main {
+.studio-container.is-transitioning {
+  pointer-events: none;
+}
+
+/* ========== 粒子背景 ========== */
+.particles-bg {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.particle {
+  position: absolute;
+  top: calc(var(--i) * 1.5%);
+  left: calc(var(--i) * 2%);
+  width: 4px;
+  height: 4px;
+  background: rgb(59 130 246 / 60%);
+  border-radius: 50%;
+  animation: particle-float 15s infinite linear;
+  animation-delay: calc(var(--i) * -0.3s);
+}
+
+@keyframes particle-float {
+  0%,
+  100% {
+    opacity: 0;
+    transform: translate(0, 0) scale(1);
+  }
+
+  10% {
+    opacity: 1;
+  }
+
+  90% {
+    opacity: 1;
+  }
+
+  50% {
+    transform: translate(
+        calc(cos(var(--i)) * 100px),
+        calc(sin(var(--i)) * 100px)
+      )
+      scale(1.5);
+  }
+}
+
+/* ========== 光晕效果 ========== */
+.glow-orb {
+  position: absolute;
+  pointer-events: none;
+  border-radius: 50%;
+  opacity: 0.3;
+  filter: blur(80px);
+  animation: glow-pulse 8s ease-in-out infinite;
+}
+
+.glow-orb-1 {
+  top: -100px;
+  left: -100px;
+  width: 400px;
+  height: 400px;
+  background: #3b82f6;
+  animation-delay: 0s;
+}
+
+.glow-orb-2 {
+  right: -50px;
+  bottom: -50px;
+  width: 300px;
+  height: 300px;
+  background: #8b5cf6;
+  animation-delay: -3s;
+}
+
+.glow-orb-3 {
+  top: 50%;
+  left: 50%;
+  width: 200px;
+  height: 200px;
+  background: #6366f1;
+  transform: translate(-50%, -50%);
+  animation-delay: -5s;
+}
+
+@keyframes glow-pulse {
+  0%,
+  100% {
+    opacity: 0.2;
+    transform: scale(1);
+  }
+
+  50% {
+    opacity: 0.4;
+    transform: scale(1.1);
+  }
+}
+
+/* ========== 主内容区 ========== */
+.studio-main {
+  position: relative;
+  z-index: 1;
   display: flex;
   flex: 1;
   flex-direction: column;
   min-width: 0;
-  overflow: hidden;
 }
 
-/* ========== 欢迎态 ========== */
-.welcome-view {
+/* ========== 过渡动画 ========== */
+.fade-up-enter-active,
+.fade-up-leave-active {
+  transition: all 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.fade-up-enter-from {
+  opacity: 0;
+  transform: translateY(30px);
+}
+
+.fade-up-leave-to {
+  opacity: 0;
+  transform: translateY(-30px);
+}
+
+/* ========== 按钮光晕 ========== */
+.btn-glow {
+  position: absolute;
+  inset: -2px;
+  z-index: -1;
+  background: linear-gradient(135deg, #3b82f6, #8b5cf6, #6366f1);
+  border-radius: inherit;
+  opacity: 0;
+  filter: blur(12px);
+  transition: opacity 0.3s ease;
+}
+
+.generate-btn:hover .btn-glow,
+.download-btn:hover .btn-glow,
+.retry-btn:hover .btn-glow {
+  opacity: 0.6;
+}
+
+/* ========== 选择态 ========== */
+.select-view {
   display: flex;
   flex: 1;
+  flex-direction: column;
+  padding: 32px 40px;
+}
+
+.select-header {
+  display: flex;
+  gap: 24px;
+  align-items: center;
+  margin-bottom: 40px;
+}
+
+.select-title {
+  margin: 0;
+  font-size: 28px;
+  font-weight: 600;
+  color: white;
+}
+
+.search-wrapper {
+  position: relative;
+  margin-left: auto;
+}
+
+.search-input {
+  width: 280px;
+  padding: 14px 20px 14px 48px;
+  font-size: 15px;
+  color: white;
+  outline: none;
+  background: rgb(255 255 255 / 5%);
+  border: 1px solid rgb(255 255 255 / 10%);
+  border-radius: 12px;
+  backdrop-filter: blur(20px);
+  transition: all 0.3s ease;
+}
+
+.search-input::placeholder {
+  color: rgb(255 255 255 / 40%);
+}
+
+.search-input:focus {
+  border-color: #3b82f6;
+  box-shadow: 0 0 24px rgb(59 130 246 / 20%);
+}
+
+.search-icon {
+  position: absolute;
+  top: 50%;
+  left: 16px;
+  color: rgb(255 255 255 / 40%);
+  transform: translateY(-50%);
+}
+
+/* ========== 表格容器 ========== */
+.table-container {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  overflow: hidden;
+  background: rgb(255 255 255 / 3%);
+  border: 1px solid rgb(255 255 255 / 8%);
+  border-radius: 16px;
+  backdrop-filter: blur(20px);
+}
+
+/* ========== Element Plus 表格自定义 ========== */
+:deep(.el-table) {
+  --el-table-bg-color: transparent;
+  --el-table-tr-bg-color: transparent;
+  --el-table-header-bg-color: rgb(255 255 255 / 5%);
+  --el-table-row-hover-bg-color: rgb(59 130 246 / 10%);
+  --el-table-border-color: rgb(255 255 255 / 6%);
+  --el-table-text-color: rgb(255 255 255 / 80%);
+  --el-table-header-text-color: rgb(255 255 255 / 60%);
+  --el-table-current-row-bg-color: rgb(59 130 246 / 15%);
+
+  background: transparent;
+}
+
+:deep(.el-table__header th) {
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+:deep(.el-table__row) {
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+}
+
+:deep(.el-table__row.current-row) {
+  background-color: rgb(59 130 246 / 15%) !important;
+}
+
+:deep(.el-table__row:hover > td.el-table__cell) {
+  background-color: rgb(59 130 246 / 10%);
+}
+
+:deep(.el-table__empty-block) {
+  background: transparent;
+}
+
+/* ========== 表格内容样式 ========== */
+.topic-text {
+  font-size: 14px;
+  font-weight: 500;
+  color: rgb(255 255 255 / 90%);
+}
+
+.type-tag {
+  display: inline-block;
+  padding: 2px 10px;
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: 12px;
+}
+
+.type-article {
+  color: #3b82f6;
+  background: rgb(59 130 246 / 15%);
+}
+
+.type-novel {
+  color: #8b5cf6;
+  background: rgb(139 92 246 / 15%);
+}
+
+.status-badge {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+.status-dot.status-success {
+  background: #10b981;
+  box-shadow: 0 0 8px rgb(16 185 129 / 50%);
+}
+
+.status-dot.status-warning {
+  background: #f59e0b;
+  box-shadow: 0 0 8px rgb(245 158 11 / 50%);
+}
+
+.status-dot.status-info {
+  background: #3b82f6;
+  box-shadow: 0 0 8px rgb(59 130 246 / 50%);
+}
+
+.status-dot.status-default {
+  background: rgb(255 255 255 / 30%);
+}
+
+.status-text {
+  font-size: 13px;
+  color: rgb(255 255 255 / 60%);
+}
+
+.score-text {
+  font-size: 14px;
+  font-weight: 600;
+  color: #8b5cf6;
+}
+
+.date-text {
+  font-size: 13px;
+  color: rgb(255 255 255 / 50%);
+}
+
+.play-btn {
+  display: flex;
   align-items: center;
   justify-content: center;
-  padding: 40px 24px;
-  overflow-y: auto;
-}
-
-.welcome-content {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  width: 100%;
-  max-width: 520px;
-}
-
-.welcome-icon {
-  width: 56px;
-  height: 56px;
-  margin-bottom: 20px;
-  color: var(--el-color-primary);
-  opacity: 0.7;
-}
-
-.welcome-icon svg {
-  width: 100%;
-  height: 100%;
-}
-
-.welcome-title {
-  margin: 0 0 8px;
-  font-size: 24px;
-  font-weight: 600;
-  color: var(--el-text-color-primary);
-}
-
-.welcome-desc {
-  margin: 0 0 36px;
-  font-size: 14px;
-  color: var(--el-text-color-secondary);
-}
-
-.welcome-form {
-  width: 100%;
-  max-width: 900px;
-}
-
-/* 搜索框 */
-.search-box {
-  margin-bottom: 20px;
-}
-
-/* 卡片网格 */
-.card-grid {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 16px;
-  max-height: 400px;
-  padding: 4px;
-  margin-bottom: 16px;
-  overflow-y: auto;
-}
-
-@media (width <= 1200px) {
-  .card-grid {
-    grid-template-columns: repeat(2, 1fr);
-  }
-}
-
-@media (width <= 768px) {
-  .card-grid {
-    grid-template-columns: 1fr;
-  }
-}
-
-/* 文章卡片 */
-.history-card {
-  padding: 16px;
+  width: 32px;
+  height: 32px;
+  margin: 0 auto;
+  color: rgb(255 255 255 / 60%);
   cursor: pointer;
-  background: var(--el-bg-color);
-  border: 2px solid var(--el-border-color-lighter);
-  border-radius: 12px;
-  box-shadow: 0 2px 8px rgb(0 0 0 / 4%);
+  background: rgb(255 255 255 / 5%);
+  border: 1px solid rgb(255 255 255 / 10%);
+  border-radius: 8px;
   transition: all 0.2s ease;
 }
 
-.history-card:hover {
-  border-color: var(--el-color-primary-light-5);
-  box-shadow: 0 4px 12px rgb(0 0 0 / 8%);
+.play-btn:hover {
+  color: #3b82f6;
+  background: rgb(59 130 246 / 15%);
+  border-color: rgb(59 130 246 / 30%);
 }
 
-.card-selected {
-  background: var(--el-color-primary-light-9);
-  border-color: var(--el-color-primary) !important;
-}
-
-/* 卡片标题 */
-.card-title {
-  display: -webkit-box;
-  margin-bottom: 10px;
-  overflow: hidden;
-  -webkit-line-clamp: 2;
-  font-size: 14px;
-  font-weight: 600;
-  line-height: 1.4;
-  color: var(--el-text-color-primary);
-  -webkit-box-orient: vertical;
-}
-
-/* 卡片标签 */
-.card-tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  align-items: center;
-  margin-bottom: 8px;
-}
-
-.card-score {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--el-color-primary);
-}
-
-/* 卡片元信息 */
-.card-meta {
-  display: flex;
-  gap: 12px;
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
-}
-
-/* 空搜索 */
-.empty-search {
-  margin-bottom: 16px;
-}
-
-.empty-hint {
-  width: 100%;
-  margin-top: 24px;
-}
-
-/* ========== 结果态 ========== */
-.result-view {
-  display: flex;
-  flex: 1;
-  justify-content: center;
-  padding: 32px 24px;
-  overflow-y: auto;
-  background: var(--el-fill-color-lighter);
-}
-
-.result-content {
-  width: 100%;
-  max-width: 600px;
-}
-
-.result-header {
+/* ========== 分页 ========== */
+.pagination-wrapper {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 24px;
+  padding: 16px 20px;
+  border-top: 1px solid rgb(255 255 255 / 6%);
 }
 
-.result-title {
-  margin: 0;
-  font-size: 18px;
-  font-weight: 600;
-  color: var(--el-text-color-primary);
+.pagination-info {
+  font-size: 13px;
+  color: rgb(255 255 255 / 40%);
 }
 
-/* ========== 进度 ========== */
-.progress-section {
-  margin-bottom: 24px;
+:deep(.el-pagination) {
+  --el-pagination-bg-color: transparent;
+  --el-pagination-text-color: rgb(255 255 255 / 60%);
+  --el-pagination-button-bg-color: rgb(255 255 255 / 5%);
+  --el-pagination-hover-color: #3b82f6;
 }
 
-.progress-card {
+:deep(.el-pagination .is-active) {
+  color: #3b82f6 !important;
+  background: rgb(59 130 246 / 20%) !important;
+}
+
+:deep(.el-pagination .el-select .el-input) {
+  --el-select-border-color-hover: #3b82f6;
+}
+
+/* ========== 底部操作栏 ========== */
+.select-footer {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  padding: 28px 24px;
-  background: linear-gradient(
-    135deg,
-    var(--el-color-primary-light-9) 0%,
-    var(--el-bg-color) 100%
-  );
-  border: 1px solid var(--el-color-primary-light-7);
-  border-radius: 14px;
+  justify-content: space-between;
+  margin-top: 40px;
 }
 
-.progress-icon {
-  flex-shrink: 0;
-  width: 40px;
-  height: 40px;
-  color: var(--el-color-primary);
-}
-
-.progress-icon svg {
-  width: 100%;
-  height: 100%;
-}
-
-.spinning {
-  animation: spin 1s linear infinite;
-}
-
-@keyframes spin {
-  from {
-    transform: rotate(0deg);
-  }
-
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-.progress-info {
-  flex: 1;
-  margin-left: 16px;
-}
-
-.progress-title {
+.generate-btn {
+  position: relative;
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 16px 40px;
+  overflow: hidden;
   font-size: 16px;
   font-weight: 600;
-  color: var(--el-color-primary);
-}
-
-.progress-detail {
-  margin-top: 4px;
-  font-size: 13px;
-  color: var(--el-text-color-secondary);
-}
-
-/* ========== 完成 ========== */
-.completed-section {
-  animation: fade-in 0.3s ease;
-}
-
-@keyframes fade-in {
-  from {
-    opacity: 0;
-    transform: translateY(8px);
-  }
-
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-.audio-player-card {
-  padding: 24px;
-  background: var(--el-bg-color);
-  border: 1px solid var(--el-border-color);
+  color: white;
+  cursor: pointer;
+  background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+  border: none;
   border-radius: 14px;
-  box-shadow: 0 2px 12px rgb(0 0 0 / 4%);
+  box-shadow: 0 8px 32px rgb(59 130 246 / 40%);
+  transition: all 0.3s ease;
+}
+
+.generate-btn:hover:not(:disabled) {
+  box-shadow: 0 12px 40px rgb(59 130 246 / 50%);
+  transform: translateY(-2px);
+}
+
+.generate-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+/* ========== 生成态 ========== */
+.generating-view {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  padding: 40px;
+}
+
+.generating-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+
+.progress-ring-container {
+  position: relative;
+  width: 200px;
+  height: 200px;
+  margin-bottom: 40px;
+}
+
+.progress-ring {
+  width: 100%;
+  height: 100%;
+  transform: rotate(-90deg);
+}
+
+.progress-ring-fill {
+  filter: drop-shadow(0 0 12px rgb(59 130 246 / 50%));
+  transition: stroke-dashoffset 0.5s ease;
+}
+
+.progress-percent {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 48px;
+  font-weight: 700;
+  background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* ========== 声波动画 ========== */
+.sound-wave {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  height: 60px;
+  margin-bottom: 40px;
+}
+
+.wave-bar {
+  width: 4px;
+  height: 20px;
+  background: linear-gradient(180deg, #3b82f6, #8b5cf6);
+  border-radius: 2px;
+  animation: wave-animation 1.2s ease-in-out infinite;
+  animation-delay: calc(var(--i) * 0.05s);
+}
+
+@keyframes wave-animation {
+  0%,
+  100% {
+    height: 20px;
+  }
+
+  50% {
+    height: calc(20px + sin(var(--i)) * 30px);
+  }
+}
+
+.generating-info {
+  margin-bottom: 32px;
+}
+
+.generating-title {
+  margin: 0 0 12px;
+  font-size: 32px;
+  font-weight: 600;
+  color: white;
+}
+
+.generating-detail {
+  margin: 0;
+  font-size: 16px;
+  color: rgb(255 255 255 / 60%);
+}
+
+.generating-article {
+  padding: 16px 24px;
+  background: rgb(255 255 255 / 5%);
+  border: 1px solid rgb(255 255 255 / 10%);
+  border-radius: 12px;
+  backdrop-filter: blur(20px);
+}
+
+.article-label {
+  font-size: 14px;
+  color: rgb(255 255 255 / 50%);
+}
+
+.article-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: white;
+}
+
+/* ========== 完成态 ========== */
+.completed-view {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  padding: 40px;
+}
+
+.completed-content {
+  width: 100%;
+  max-width: 700px;
+}
+
+.player-card {
+  padding: 32px;
+  background: rgb(255 255 255 / 5%);
+  border: 1px solid rgb(255 255 255 / 10%);
+  border-radius: 24px;
+  box-shadow: 0 24px 80px rgb(0 0 0 / 30%);
+  backdrop-filter: blur(20px);
 }
 
 .player-header {
   display: flex;
   gap: 16px;
   align-items: center;
+  margin-bottom: 24px;
 }
 
 .player-icon {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 48px;
-  height: 48px;
-  color: white;
-  background: var(--el-color-primary);
-  border-radius: 12px;
+  width: 56px;
+  height: 56px;
+  background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+  border-radius: 16px;
+  box-shadow: 0 8px 24px rgb(59 130 246 / 40%);
 }
 
 .player-icon svg {
-  width: 22px;
-  height: 22px;
+  width: 24px;
+  height: 24px;
+  color: white;
+}
+
+.player-info {
+  flex: 1;
 }
 
 .player-title {
-  font-size: 16px;
+  margin: 0 0 4px;
+  font-size: 20px;
   font-weight: 600;
-  color: var(--el-text-color-primary);
+  color: white;
 }
 
 .player-subtitle {
-  margin-top: 4px;
-  font-size: 13px;
-  color: var(--el-color-success);
+  margin: 0;
+  font-size: 14px;
+  color: rgb(255 255 255 / 60%);
 }
 
-.audio-meta {
+.back-to-select {
   display: flex;
-  gap: 24px;
-  padding-top: 16px;
-  margin-top: 16px;
-  border-top: 1px solid var(--el-border-color-lighter);
+  gap: 8px;
+  align-items: center;
+  padding: 10px 20px;
+  font-size: 14px;
+  color: rgb(255 255 255 / 70%);
+  cursor: pointer;
+  background: rgb(255 255 255 / 5%);
+  border: 1px solid rgb(255 255 255 / 10%);
+  border-radius: 10px;
+  transition: all 0.3s ease;
+}
+
+.back-to-select:hover {
+  color: white;
+  background: rgb(255 255 255 / 10%);
+}
+
+/* ========== 波形可视化 ========== */
+.waveform-container {
+  height: 80px;
+  margin-bottom: 24px;
+  overflow: hidden;
+  background: rgb(0 0 0 / 20%);
+  border-radius: 12px;
+}
+
+.waveform-canvas {
+  width: 100%;
+  height: 100%;
+}
+
+.audio-player {
+  width: 100%;
+  margin-bottom: 24px;
+  border-radius: 12px;
+}
+
+.player-meta {
+  display: flex;
+  gap: 32px;
+  padding-top: 20px;
+  margin-bottom: 24px;
+  border-top: 1px solid rgb(255 255 255 / 10%);
 }
 
 .meta-item {
@@ -785,18 +1299,140 @@ onBeforeUnmount(() => {
 }
 
 .meta-label {
-  font-size: 11px;
-  color: var(--el-text-color-secondary);
+  font-size: 12px;
+  color: rgb(255 255 255 / 40%);
 }
 
 .meta-value {
-  font-size: 15px;
+  font-size: 16px;
   font-weight: 600;
-  color: var(--el-text-color-primary);
+  color: white;
 }
 
-/* ========== 错误 ========== */
-.error-section {
-  animation: fade-in 0.3s ease;
+.player-actions {
+  display: flex;
+  justify-content: center;
+}
+
+.download-btn {
+  position: relative;
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 16px 48px;
+  overflow: hidden;
+  font-size: 16px;
+  font-weight: 600;
+  color: white;
+  cursor: pointer;
+  background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+  border: none;
+  border-radius: 14px;
+  box-shadow: 0 8px 32px rgb(59 130 246 / 40%);
+  transition: all 0.3s ease;
+}
+
+.download-btn:hover {
+  box-shadow: 0 12px 40px rgb(59 130 246 / 50%);
+  transform: translateY(-2px);
+}
+
+/* ========== 错误态 ========== */
+.error-view {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  padding: 40px;
+}
+
+.error-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+
+.error-icon {
+  width: 80px;
+  height: 80px;
+  margin-bottom: 24px;
+  color: #ef4444;
+  filter: drop-shadow(0 0 20px rgb(239 68 68 / 50%));
+  animation: error-shake 0.6s ease-in-out;
+}
+
+@keyframes error-shake {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+
+  20%,
+  60% {
+    transform: translateX(-10px);
+  }
+
+  40%,
+  80% {
+    transform: translateX(10px);
+  }
+}
+
+.error-icon svg {
+  width: 100%;
+  height: 100%;
+}
+
+.error-title {
+  margin: 0 0 12px;
+  font-size: 32px;
+  font-weight: 600;
+  color: white;
+}
+
+.error-message {
+  margin: 0 0 32px;
+  font-size: 16px;
+  color: rgb(255 255 255 / 60%);
+}
+
+.error-actions {
+  display: flex;
+  gap: 16px;
+}
+
+.retry-btn {
+  position: relative;
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 16px 40px;
+  overflow: hidden;
+  font-size: 16px;
+  font-weight: 600;
+  color: white;
+  cursor: pointer;
+  background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+  border: none;
+  border-radius: 14px;
+  box-shadow: 0 8px 32px rgb(59 130 246 / 40%);
+  transition: all 0.3s ease;
+}
+
+.retry-btn:hover {
+  box-shadow: 0 12px 40px rgb(59 130 246 / 50%);
+  transform: translateY(-2px);
+}
+
+/* ========== 响应式 ========== */
+@media (width <= 768px) {
+  .studio-container {
+    inset: 0;
+  }
+
+  .card-title {
+    font-size: 18px;
+  }
 }
 </style>
