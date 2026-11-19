@@ -71,47 +71,53 @@ class PureHttp {
           PureHttp.initConfig.beforeRequestCallback(config);
           return config;
         }
-        /** 请求白名单，放置一些不需要`token`的接口（通过设置请求白名单，防止`token`过期后再请求造成的死循环问题） */
+        /** 请求白名单：登录/刷新本身不走进续期逻辑（但刷新请求仍需携带`token`） */
         const whiteList = ["/api/auth/login", "/api/auth/refresh"];
-        return whiteList.some(url => config.url.endsWith(url))
-          ? config
-          : new Promise(resolve => {
-              const data = getToken();
-              if (data) {
-                const now = new Date().getTime();
-                const expired = parseInt(data.expires) - now <= 0;
-                if (expired) {
-                  if (!PureHttp.isRefreshing) {
-                    PureHttp.isRefreshing = true;
-                    // token过期刷新
-                    useUserStoreHook()
-                      .handRefreshToken()
-                      .then(res => {
-                        const token = res.data.token;
-                        config.headers["Authorization"] = formatToken(token);
-                        PureHttp.requests.forEach(cb => cb(token));
-                        PureHttp.requests = [];
-                      })
-                      .catch(_err => {
-                        PureHttp.requests = [];
-                        useUserStoreHook().logOut();
-                        message(transformI18n($t("login.pureLoginExpired")), {
-                          type: "warning"
-                        });
-                      })
-                      .finally(() => {
-                        PureHttp.isRefreshing = false;
-                      });
-                  }
-                  resolve(PureHttp.retryOriginalRequest(config));
-                } else {
-                  config.headers["Authorization"] = formatToken(data.token);
-                  resolve(config);
-                }
-              } else {
-                resolve(config);
-              }
-            });
+        const isWhiteList = whiteList.some(url => config.url.endsWith(url));
+
+        const data = getToken();
+        const token = data?.token;
+
+        // 只要本地有`token`就带上（刷新接口依赖它）
+        if (token) {
+          config.headers["Authorization"] = formatToken(token);
+        }
+
+        // 白名单请求，或本地根本没有`token`：直接放行
+        if (isWhiteList || !data) return config;
+
+        /** 提前续期阈值：剩余有效期不足 5 分钟就换新`token`（而不是等到过期） */
+        const REFRESH_AHEAD_MS = 5 * 60 * 1000;
+        const expiresAt = Number(data.expires);
+        if (!expiresAt || expiresAt - Date.now() > REFRESH_AHEAD_MS)
+          return config;
+
+        return new Promise(resolve => {
+          if (!PureHttp.isRefreshing) {
+            PureHttp.isRefreshing = true;
+            // token 即将过期，提前刷新
+            useUserStoreHook()
+              .handRefreshToken()
+              .then(res => {
+                const newToken = res.data?.token;
+                if (!newToken) throw new Error("刷新 token 失败");
+                config.headers["Authorization"] = formatToken(newToken);
+                PureHttp.requests.forEach(cb => cb(newToken));
+                PureHttp.requests = [];
+              })
+              .catch(_err => {
+                PureHttp.requests = [];
+                useUserStoreHook().logOut();
+                message(transformI18n($t("login.pureLoginExpired")), {
+                  type: "warning"
+                });
+              })
+              .finally(() => {
+                PureHttp.isRefreshing = false;
+              });
+          }
+          resolve(PureHttp.retryOriginalRequest(config));
+        });
       },
       error => {
         return Promise.reject(error);

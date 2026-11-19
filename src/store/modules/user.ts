@@ -138,15 +138,15 @@ export const useUserStore = defineStore("pure-user", {
       return new Promise<RefreshTokenResult>((resolve, reject) => {
         refreshTokenApi()
           .then(res => {
-            if (res.code === 200) {
-              const refreshData = res.data;
+            const newToken = res?.data?.token;
+            if (res.code === 200 && newToken) {
               setToken({
-                token: refreshData.token,
-                expires: new Date(Date.now() + refreshData.expiresIn * 1000)
+                token: newToken,
+                expires: new Date(Date.now() + res.data.expiresIn * 1000)
               } as DataInfo<Date>);
               resolve(res);
             } else {
-              reject(res.message);
+              reject(res?.message || "刷新 token 失败");
             }
           })
           .catch(error => {

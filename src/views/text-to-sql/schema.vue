@@ -1,31 +1,83 @@
 <script setup lang="ts">
-import { ref, onMounted } from "vue";
-import { useRenderIcon } from "@/components/ReIcon/src/hooks";
+import { computed, onMounted, ref } from "vue";
+import { ElMessageBox } from "element-plus";
 import { message } from "@/utils/message";
 import {
-  getTextToSqlTables,
-  getTableSchema,
-  vectorizeSchema,
+  deleteTableVectors,
   getSchemaStatus,
+  getSchemaTables,
+  getTableSchema,
   type SchemaInfo,
-  type SchemaStatus
+  type SchemaStatus,
+  type SchemaTableItem
 } from "@/api/text-to-sql";
+import { useSchemaSync } from "./composables/useSchemaSync";
+import {
+  formatTime,
+  getSyncPercent,
+  getSyncProgressText,
+  getTableTag,
+  getVectorStatusMeta,
+  handleApiError
+} from "./utils/schema";
 
 defineOptions({ name: "TextToSqlSchema" });
 
-const tables = ref<string[]>([]);
+const schemaTables = ref<SchemaTableItem[]>([]);
 const selectedTable = ref("");
 const schema = ref<SchemaInfo | null>(null);
-const schemaStatus = ref<SchemaStatus | null>(null);
+const status = ref<SchemaStatus | null>(null);
+const keyword = ref("");
 const loading = ref(false);
-const vectorizing = ref(false);
+const refreshing = ref(false);
+const deleting = ref(false);
 
-// 加载表列表
+const {
+  task,
+  running,
+  start,
+  refresh: refreshSync
+} = useSchemaSync(() => {
+  refreshAll();
+});
+
+const filteredTables = computed(() => {
+  const kw = keyword.value.trim().toLowerCase();
+  if (!kw) return schemaTables.value;
+  return schemaTables.value.filter(
+    item =>
+      item.tableName.toLowerCase().includes(kw) ||
+      (item.tableComment ?? "").toLowerCase().includes(kw)
+  );
+});
+
+const percent = computed(() => getSyncPercent(task.value));
+const progressText = computed(() => getSyncProgressText(task.value));
+
+// 加载逐表状态
 async function loadTables() {
   try {
-    const res = await getTextToSqlTables();
+    const res = await getSchemaTables();
     if (res?.code === 200) {
-      tables.value = res.data ?? [];
+      // 接口未约定排序，前端按表名稳定排序
+      schemaTables.value = [...(res.data ?? [])].sort((a, b) =>
+        a.tableName.localeCompare(b.tableName)
+      );
+    } else if (res?.code === 404) {
+      // Text-to-SQL 功能关闭
+      schemaTables.value = [];
+    }
+  } catch {
+    // ignore
+  }
+}
+
+// 加载汇总状态
+async function loadStatus() {
+  try {
+    const res = await getSchemaStatus();
+    if (res?.code === 200) {
+      status.value = res.data;
     }
   } catch {
     // ignore
@@ -45,145 +97,227 @@ async function loadSchema(tableName: string) {
     if (res?.code === 200) {
       schema.value = res.data;
     } else {
-      message(res?.message ?? "获取表结构失败", { type: "error" });
+      schema.value = null;
+      const action = handleApiError(res, "获取表结构失败");
+      if (action === "remove") {
+        selectedTable.value = "";
+        loadTables();
+      } else if (action === "refresh") {
+        loadTables();
+      }
     }
   } catch (e: any) {
+    schema.value = null;
     message(e?.message ?? "获取表结构失败", { type: "error" });
   } finally {
     loading.value = false;
   }
 }
 
-// 加载 Schema 状态
-async function loadSchemaStatus() {
+// 整体刷新
+async function refreshAll() {
+  refreshing.value = true;
   try {
-    const res = await getSchemaStatus();
-    if (res?.code === 200) {
-      schemaStatus.value = res.data;
+    await Promise.all([loadStatus(), loadTables()]);
+    if (selectedTable.value) {
+      await loadSchema(selectedTable.value);
     }
-  } catch {
-    // ignore
+  } finally {
+    refreshing.value = false;
   }
 }
 
 // 选择表
-function handleSelectTable(tableName: string) {
-  selectedTable.value = tableName;
-  loadSchema(tableName);
+function handleSelectTable(item: SchemaTableItem) {
+  selectedTable.value = item.tableName;
+  loadSchema(item.tableName);
 }
 
-// 向量化单个表
-async function handleVectorizeTable() {
+// 同步所有表
+async function handleSyncAll() {
+  const ok = await start();
+  if (ok) message("已启动全库同步", { type: "success" });
+}
+
+// 同步当前表
+async function handleSyncTable() {
+  if (!selectedTable.value) {
+    message("请先选择表", { type: "warning" });
+    return;
+  }
+  const ok = await start(selectedTable.value);
+  if (ok)
+    message(`已启动表 ${selectedTable.value} 的同步`, { type: "success" });
+}
+
+// 删除当前表向量
+async function handleDeleteVectors() {
   if (!selectedTable.value) {
     message("请先选择表", { type: "warning" });
     return;
   }
 
-  vectorizing.value = true;
+  const tableName = selectedTable.value;
   try {
-    const res = await vectorizeSchema(selectedTable.value);
+    await ElMessageBox.confirm(
+      `确定删除表 ${tableName} 的向量与记录吗？删除后需重新同步才能用于问答检索。`,
+      "删除向量",
+      { type: "warning", confirmButtonText: "删除", cancelButtonText: "取消" }
+    );
+  } catch {
+    return;
+  }
+
+  deleting.value = true;
+  try {
+    const res = await deleteTableVectors(tableName);
     if (res?.code === 200) {
-      message(`表 ${selectedTable.value} 向量化完成`, { type: "success" });
-      loadSchemaStatus();
+      message(`已删除表 ${tableName} 的向量`, { type: "success" });
+      schema.value = null;
+      selectedTable.value = "";
+      await refreshAll();
     } else {
-      message(res?.message ?? "向量化失败", { type: "error" });
+      handleApiError(res, "删除向量失败");
     }
   } catch (e: any) {
-    message(e?.message ?? "向量化失败", { type: "error" });
+    message(e?.message ?? "删除向量失败", { type: "error" });
   } finally {
-    vectorizing.value = false;
+    deleting.value = false;
   }
 }
 
-// 向量化所有表
-async function handleVectorizeAll() {
-  vectorizing.value = true;
-  try {
-    const res = await vectorizeSchema();
-    if (res?.code === 200) {
-      message("所有表向量化完成", { type: "success" });
-      loadSchemaStatus();
-    } else {
-      message(res?.message ?? "向量化失败", { type: "error" });
-    }
-  } catch (e: any) {
-    message(e?.message ?? "向量化失败", { type: "error" });
-  } finally {
-    vectorizing.value = false;
-  }
-}
-
-// 格式化时间
-function formatTime(timestamp: number) {
-  if (!timestamp) return "未更新";
-  return new Date(timestamp).toLocaleString("zh-CN");
-}
-
-onMounted(() => {
-  loadTables();
-  loadSchemaStatus();
+onMounted(async () => {
+  await Promise.all([loadStatus(), loadTables()]);
+  // 接上可能已在运行的同步任务
+  refreshSync();
 });
 </script>
 
 <template>
   <div class="schema-container p-4">
     <!-- 状态栏 -->
-    <div v-if="schemaStatus" class="status-bar mb-4">
-      <div class="status-item">
-        <span class="label">已索引表数：</span>
-        <span class="value">{{ schemaStatus.cachedTableCount }}</span>
+    <el-card class="mb-4" shadow="never">
+      <div class="status-bar">
+        <div class="status-item">
+          <span class="label">表总数</span>
+          <span class="value">{{ status?.tableCount ?? 0 }}</span>
+        </div>
+        <div class="status-item">
+          <span class="label">已索引</span>
+          <span class="value text-green-600">{{
+            status?.indexedCount ?? 0
+          }}</span>
+        </div>
+        <div class="status-item">
+          <span class="label">待处理</span>
+          <span class="value text-gray-500">{{
+            status?.pendingCount ?? 0
+          }}</span>
+        </div>
+        <div class="status-item">
+          <span class="label">失败</span>
+          <span class="value text-red-500">{{ status?.failedCount ?? 0 }}</span>
+        </div>
+        <div class="status-item">
+          <span class="label">最后同步</span>
+          <span class="value text-gray-500">{{
+            formatTime(status?.lastSyncTime)
+          }}</span>
+        </div>
+        <div class="status-item">
+          <el-tag v-if="running" type="primary" size="small" class="ml-1">
+            同步中
+          </el-tag>
+          <el-tag
+            v-else
+            :type="status?.needsUpdate ? 'warning' : 'success'"
+            size="small"
+          >
+            {{ status?.needsUpdate ? "需要更新" : "正常" }}
+          </el-tag>
+        </div>
+        <div class="ml-auto flex gap-2">
+          <el-button :loading="refreshing" @click="refreshAll">
+            刷新
+          </el-button>
+          <el-button
+            type="primary"
+            :loading="running"
+            :disabled="running"
+            @click="handleSyncAll"
+          >
+            <el-icon class="mr-1"
+              ><IconifyIconOffline icon="ri:refresh-line"
+            /></el-icon>
+            更新所有表
+          </el-button>
+        </div>
       </div>
-      <div class="status-item">
-        <span class="label">最后更新：</span>
-        <span class="value">{{
-          formatTime(schemaStatus.lastVectorizeTime)
-        }}</span>
+
+      <!-- 同步进度 -->
+      <div v-if="running" class="progress-bar">
+        <el-progress
+          :percentage="percent"
+          :status="task && task.failed > 0 ? 'warning' : undefined"
+          :stroke-width="12"
+        />
+        <span class="progress-text">
+          {{ task?.scope === "ALL" ? "全库同步" : `同步 ${task?.scope ?? ""}` }}
+          ：{{ progressText }}
+          <template v-if="task && task.failed > 0">
+            ，失败 {{ task.failed }}
+          </template>
+        </span>
       </div>
-      <div class="status-item">
-        <span class="label">状态：</span>
-        <el-tag
-          :type="schemaStatus.needsUpdate ? 'warning' : 'success'"
-          size="small"
-        >
-          {{ schemaStatus.needsUpdate ? "需要更新" : "正常" }}
-        </el-tag>
-      </div>
-      <el-button
-        type="primary"
-        :loading="vectorizing"
-        @click="handleVectorizeAll"
-      >
-        <el-icon class="mr-1"
-          ><IconifyIconOffline icon="ri:refresh-line"
-        /></el-icon>
-        更新所有表
-      </el-button>
-    </div>
+    </el-card>
 
     <!-- 主内容区 -->
     <div class="schema-content">
       <!-- 左侧表列表 -->
       <el-card class="table-list-card" shadow="never">
         <template #header>
-          <div class="flex-bc">
-            <span class="font-bold">可用表 ({{ tables.length }})</span>
+          <div class="flex-bc mb-2">
+            <span class="font-bold">可用表 ({{ schemaTables.length }})</span>
           </div>
+          <el-input
+            v-model="keyword"
+            placeholder="搜索表名 / 注释"
+            size="small"
+            clearable
+          />
         </template>
         <div class="table-list">
           <div
-            v-for="table in tables"
-            :key="table"
-            :class="['table-item', { active: selectedTable === table }]"
-            @click="handleSelectTable(table)"
+            v-for="item in filteredTables"
+            :key="item.tableName"
+            :class="[
+              'table-item',
+              { active: selectedTable === item.tableName }
+            ]"
+            @click="handleSelectTable(item)"
           >
-            <el-icon class="mr-2"
-              ><IconifyIconOffline icon="ri:table-line"
-            /></el-icon>
-            <span>{{ table }}</span>
+            <span class="status-dot" :class="`dot-${item.vectorStatus}`" />
+            <div class="table-info">
+              <div class="table-name">{{ item.tableName }}</div>
+              <div class="table-meta">
+                {{ item.tableComment || "无注释" }} · {{ item.columnCount }} 列
+              </div>
+            </div>
+            <el-tooltip
+              :content="
+                item.errorMessage || getVectorStatusMeta(item.vectorStatus).text
+              "
+              :disabled="!item.errorMessage"
+              placement="top"
+            >
+              <el-tag :type="getTableTag(item).type" size="small">
+                {{ getTableTag(item).text }}
+              </el-tag>
+            </el-tooltip>
           </div>
           <el-empty
-            v-if="!tables.length"
-            description="暂无表"
+            v-if="!filteredTables.length"
+            :description="keyword ? '没有匹配的表' : '暂无表'"
             :image-size="60"
           />
         </div>
@@ -196,18 +330,33 @@ onMounted(() => {
             <span class="font-bold">
               {{ schema ? `${schema.tableName} 表结构` : "表结构详情" }}
             </span>
-            <el-button
-              v-if="schema"
-              type="primary"
-              size="small"
-              :loading="vectorizing"
-              @click="handleVectorizeTable"
-            >
-              <el-icon class="mr-1"
-                ><IconifyIconOffline icon="ri:refresh-line"
-              /></el-icon>
-              更新向量
-            </el-button>
+            <div v-if="schema" class="flex gap-2">
+              <el-button
+                type="primary"
+                size="small"
+                :loading="running"
+                :disabled="running"
+                @click="handleSyncTable"
+              >
+                <el-icon class="mr-1"
+                  ><IconifyIconOffline icon="ri:refresh-line"
+                /></el-icon>
+                更新此表
+              </el-button>
+              <el-button
+                type="danger"
+                size="small"
+                plain
+                :loading="deleting"
+                :disabled="running || deleting"
+                @click="handleDeleteVectors"
+              >
+                <el-icon class="mr-1"
+                  ><IconifyIconOffline icon="ri:delete-bin-line"
+                /></el-icon>
+                删除向量
+              </el-button>
+            </div>
           </div>
         </template>
 
@@ -217,7 +366,7 @@ onMounted(() => {
           </div>
           <el-table :data="schema.columns" border stripe size="small">
             <el-table-column prop="columnName" label="列名" min-width="120" />
-            <el-table-column prop="columnType" label="类型" min-width="100" />
+            <el-table-column prop="columnType" label="类型" min-width="140" />
             <el-table-column
               prop="columnComment"
               label="注释"
@@ -262,9 +411,6 @@ onMounted(() => {
   flex-wrap: wrap;
   gap: 24px;
   align-items: center;
-  padding: 16px;
-  background: var(--el-fill-color-lighter);
-  border-radius: 8px;
 }
 
 .status-item {
@@ -278,6 +424,23 @@ onMounted(() => {
   color: var(--el-text-color-secondary);
 }
 
+.status-item .value {
+  font-weight: 600;
+}
+
+.progress-bar {
+  padding-top: 16px;
+  margin-top: 16px;
+  border-top: 1px solid var(--el-border-color-lighter);
+}
+
+.progress-text {
+  display: inline-block;
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+
 .schema-content {
   display: flex;
   gap: 16px;
@@ -286,7 +449,7 @@ onMounted(() => {
 
 .table-list-card {
   flex-shrink: 0;
-  width: 250px;
+  width: 300px;
 }
 
 .table-detail-card {
@@ -301,6 +464,7 @@ onMounted(() => {
 
 .table-item {
   display: flex;
+  gap: 8px;
   align-items: center;
   padding: 10px 12px;
   font-size: 14px;
@@ -314,8 +478,46 @@ onMounted(() => {
 }
 
 .table-item.active {
-  color: var(--el-color-primary);
   background: var(--el-color-primary-light-9);
+}
+
+.table-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.table-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.table-meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  white-space: nowrap;
+}
+
+.status-dot {
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.dot-0 {
+  background: var(--el-color-info);
+}
+
+.dot-1 {
+  background: var(--el-color-success);
+}
+
+.dot-2 {
+  background: var(--el-color-danger);
 }
 
 .loading-container {

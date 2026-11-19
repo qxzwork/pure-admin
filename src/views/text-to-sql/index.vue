@@ -7,7 +7,6 @@ import {
   queryTextToSql,
   getTextToSqlTables,
   getSchemaStatus,
-  vectorizeSchema,
   type TextToSqlResponse,
   type QueryHistory,
   type SchemaStatus
@@ -16,6 +15,7 @@ import SqlViewer from "./components/SqlViewer.vue";
 import ChartPanel from "./components/ChartPanel.vue";
 import TablePanel from "./components/TablePanel.vue";
 import SchemaPanel from "./components/SchemaPanel.vue";
+import { formatTime } from "./utils/schema";
 
 defineOptions({ name: "TextToSql" });
 
@@ -127,19 +127,9 @@ async function loadSchemaStatus() {
   }
 }
 
-// 更新向量
-async function handleVectorize(tableName?: string) {
-  try {
-    const res = await vectorizeSchema(tableName);
-    if (res?.code === 200) {
-      message("向量化完成", { type: "success" });
-      loadSchemaStatus();
-    } else {
-      message(res?.message ?? "向量化失败", { type: "error" });
-    }
-  } catch (e: any) {
-    message(e?.message ?? "向量化失败", { type: "error" });
-  }
+// 更新向量（Schema 面板内触发，完成后同步刷新侧边栏状态）
+async function handleSchemaUpdated() {
+  await Promise.all([loadSchemaStatus(), loadTables()]);
 }
 
 // 清空历史
@@ -192,12 +182,31 @@ onMounted(() => {
       <!-- Schema 状态 -->
       <div v-if="schemaStatus" class="mb-3 p-2 bg-gray-50 rounded text-xs">
         <div class="flex justify-between mb-1">
-          <span>已索引表数：</span>
-          <span>{{ schemaStatus.cachedTableCount }}</span>
+          <span>已索引 / 总数：</span>
+          <span>
+            {{ schemaStatus.indexedCount }} / {{ schemaStatus.tableCount }}
+          </span>
+        </div>
+        <div
+          v-if="schemaStatus.failedCount > 0"
+          class="flex justify-between mb-1"
+        >
+          <span>失败：</span>
+          <span class="text-red-500">{{ schemaStatus.failedCount }}</span>
+        </div>
+        <div class="flex justify-between mb-1">
+          <span>最后同步：</span>
+          <span class="text-gray-500">{{
+            formatTime(schemaStatus.lastSyncTime)
+          }}</span>
         </div>
         <div class="flex justify-between">
           <span>状态：</span>
+          <el-tag v-if="schemaStatus.running" type="primary" size="small">
+            同步中
+          </el-tag>
           <el-tag
+            v-else
             :type="schemaStatus.needsUpdate ? 'warning' : 'success'"
             size="small"
           >
@@ -392,7 +401,7 @@ onMounted(() => {
       width="800px"
       destroy-on-close
     >
-      <SchemaPanel :tables="tables" @vectorize="handleVectorize" />
+      <SchemaPanel @updated="handleSchemaUpdated" />
     </el-dialog>
   </div>
 </template>

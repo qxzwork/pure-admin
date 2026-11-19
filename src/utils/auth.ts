@@ -30,11 +30,19 @@ export const TokenKey = "authorized-token";
 export const multipleTabsKey = "multiple-tabs";
 
 /** 获取`token` */
-export function getToken(): DataInfo<number> {
-  // 此处与`TokenKey`相同，此写法解决初始化时`Cookies`中不存在`TokenKey`报错
-  return Cookies.get(TokenKey)
-    ? JSON.parse(Cookies.get(TokenKey))
-    : storageLocal().getItem(userKey);
+export function getToken(): DataInfo<number> | undefined {
+  const raw = Cookies.get(TokenKey);
+  let data: DataInfo<number>;
+  try {
+    // 此处与`TokenKey`相同，此写法解决初始化时`Cookies`中不存在`TokenKey`报错
+    data = raw
+      ? JSON.parse(raw)
+      : storageLocal().getItem<DataInfo<number>>(userKey);
+  } catch {
+    data = storageLocal().getItem<DataInfo<number>>(userKey);
+  }
+  // `localStorage`的`user-info`不含`token`，此时视为"无`token`"，避免出现`Bearer undefined`
+  return data?.token ? data : undefined;
 }
 
 /**

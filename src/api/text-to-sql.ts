@@ -49,7 +49,7 @@ export type TextToSqlResponse = {
 export type ColumnInfo = {
   columnName: string;
   columnType: string;
-  columnComment: string;
+  columnComment: string | null;
   isPrimaryKey: boolean;
   isNullable: boolean;
 };
@@ -57,15 +57,58 @@ export type ColumnInfo = {
 /** Schema 信息 */
 export type SchemaInfo = {
   tableName: string;
-  tableComment: string;
+  tableComment: string | null;
   columns: ColumnInfo[];
 };
 
-/** Schema 状态 */
+/** 同步任务 */
+export type SyncTaskView = {
+  taskId: string;
+  /** "ALL" 表示全库；否则为单个表名 */
+  scope: string;
+  total: number;
+  /** 已完成数量（含"未变化跳过"） */
+  done: number;
+  failed: number;
+  running: boolean;
+  /** epoch ms */
+  startedAt: number;
+  /** epoch ms；运行中为 0 */
+  finishedAt: number;
+  message: string;
+};
+
+/** 逐表状态 */
+export type SchemaTableItem = {
+  tableName: string;
+  tableComment: string | null;
+  columnCount: number;
+  /** 0=待处理 1=已完成 2=失败 */
+  vectorStatus: 0 | 1 | 2;
+  /** ISO-8601 */
+  vectorTime: string | null;
+  errorMessage: string | null;
+  /** 结构哈希与已索引版本一致 */
+  upToDate: boolean;
+};
+
+/** Schema 汇总状态 */
 export type SchemaStatus = {
-  lastVectorizeTime: number;
-  cachedTableCount: number;
+  /** 允许访问的表总数 */
+  tableCount: number;
+  /** 已索引且结构未变化 */
+  indexedCount: number;
+  /** 未索引 / 结构已变化 */
+  pendingCount: number;
+  /** 上次同步失败 */
+  failedCount: number;
+  /** ISO-8601 */
+  lastSyncTime: string | null;
   needsUpdate: boolean;
+  /** 元数据快照中的表数（≠ 已索引数） */
+  cachedTableCount: number;
+  running: boolean;
+  currentTask?: SyncTaskView;
 };
 
 /** 查询历史 */
@@ -105,12 +148,36 @@ export const getTableSchema = (tableName: string) => {
 
 // ========== Schema 管理接口 ==========
 
-/** 更新 Schema 向量 */
-export const vectorizeSchema = (tableName?: string) => {
-  return http.request<SimpleResult<null>>(
+/** 启动 Schema 同步（不传 tableName 即全库），异步返回任务 */
+export const startSchemaSync = (tableName?: string) => {
+  return http.request<SimpleResult<SyncTaskView>>(
     "post",
-    "/api/text-to-sql/schema/vectorize",
+    "/api/text-to-sql/schema/sync",
     { params: tableName ? { tableName } : {} }
+  );
+};
+
+/** 查询当前同步任务进度；从未执行过时 data 可能是空对象 */
+export const getSchemaSyncStatus = () => {
+  return http.request<SimpleResult<SyncTaskView | null>>(
+    "get",
+    "/api/text-to-sql/schema/sync/status"
+  );
+};
+
+/** 获取表列表 + 逐表向量状态 */
+export const getSchemaTables = () => {
+  return http.request<SimpleResult<SchemaTableItem[]>>(
+    "get",
+    "/api/text-to-sql/schema"
+  );
+};
+
+/** 删除单表向量与记录 */
+export const deleteTableVectors = (tableName: string) => {
+  return http.request<SimpleResult<null>>(
+    "delete",
+    `/api/text-to-sql/schema/${encodeURIComponent(tableName)}`
   );
 };
 
